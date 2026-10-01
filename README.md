@@ -138,7 +138,7 @@ for safety checks, diff output, and alternate destinations.
 ## Validation
 
 ```sh
-python3 -m unittest discover -s tests -v
+python3 -B -m unittest discover -s tests -v
 zsh -n home/.zshrc
 zsh -n home/.zshenv
 bash -n home/.bashrc

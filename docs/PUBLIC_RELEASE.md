@@ -121,6 +121,17 @@ or cleans Git, and never transfers private history. After a successful apply,
 another preview reports no changes. Another apply requires you to first resolve
 the previous unstaged changes; once committed, an unchanged apply is a no-op.
 
+For validation from the public repository, suppress bytecode generation:
+
+```sh
+cd ~/project/dotfiles-public
+python3 -B -m unittest discover -s tests -v
+```
+
+`-B` prevents new `__pycache__` bytecode caches, which are ignored files and
+would block a later sync. It does not remove existing caches; the same
+dirty/ignored-file safety checks still apply.
+
 ## Bootstrap contract
 
 Ubuntu is the first target for future bootstrap development, consistent with the

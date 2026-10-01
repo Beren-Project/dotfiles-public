@@ -37,7 +37,7 @@ supervisor throughout. Python/shell syntax checks and `git diff --check` passed.
   temporary ZDOTDIR and cleans it on normal exit. A real-shell regression
   confirms preview leaves the repository payload unchanged. A subsequent
   restore with deliberately planted caches still deploys exactly nine files.
-- The public manifest now contains 33 files, including profiling docs,
+- At the 2026-09-17 checkpoint, the public manifest contained 33 files, including profiling docs,
   benchmark tools, the preview helper, and a sanitized numeric evidence summary.
   Raw profiles, usernames, home paths, and command strings are excluded from
   that summary. Tests check exported documentation links, referenced scripts,
