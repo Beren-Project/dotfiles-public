@@ -1,0 +1,16 @@
+# Machine-local data must stay outside the backup.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*history*
+*.log
+*.bak
+.DS_Store
+__pycache__/
+.agents/
+.codex/
+
+.gitconfig.local
+public-export/

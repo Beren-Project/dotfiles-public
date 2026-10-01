@@ -1,0 +1,108 @@
+# Dotfiles
+
+Personal Linux shell, Git, and terminal settings, captured on 2026-09-14.
+Configs live in `home/`, mirroring paths in the user's home directory.
+
+## What's included
+
+| Settings | Files under `home/` |
+| --- | --- |
+| Zsh and Bash | `.zshrc`, `.zshenv`, `.bashrc`, `.profile` |
+| Git and delta | `.gitconfig` |
+| tmux and Zellij | `.tmux.conf`, `.config/zellij/config.kdl` |
+| Starship prompt | `.config/starship.toml` |
+| Mermaid browser launcher used by the shell | `.config/mermaid/pptr.json` |
+
+No custom Vim, Neovim, or Helix configuration was found in the usual home or
+`~/.config` locations. Windows Terminal settings are not included; the
+setup notes contain the Shift+Enter binding to add on Windows.
+
+The Zsh configuration is framework-free, with native completion, three optional
+standalone plugins, and the existing Starship prompt. See [setup and preview](docs/SETUP.md)
+for plugin installation and trying the shell before activation.
+
+## Restore on a replacement machine
+
+1. Install Git and Python 3, then clone your published repository.
+2. From its directory, check dependencies, then preview the changes:
+
+   ```sh
+   python3 scripts/check_dependencies.py
+   python3 scripts/restore.py
+   ```
+
+3. Create your local Git identity as described in [publication and setup notes](docs/PUBLIC_RELEASE.md), then apply the configuration:
+
+   ```sh
+   python3 scripts/restore.py --apply
+   ```
+
+4. Install the dependencies listed in [setup notes](docs/SETUP.md), then open
+   a new terminal. Restore credentials separately and authenticate GitHub CLI
+   if you use its Git credential helper.
+
+Existing changed files move into `~/.dotfiles-backups/<UTC timestamp>/` before
+replacement. Identical files are skipped. Destination directory conflicts and
+symlinked parent directories are rejected before copying. Existing file
+symlinks are backed up as links, without modifying the files they point to.
+To undo a replacement, copy its old file from the backup to the original path;
+newly created files have no previous version to restore.
+
+To rehearse in a disposable directory:
+
+```sh
+python3 scripts/restore.py --target /tmp/dotfiles-demo
+python3 scripts/restore.py --target /tmp/dotfiles-demo --apply
+```
+
+Use `--profile shell` to restore only `.zshrc`, `.zshenv`, and Starship.
+The default `--profile all` restores all shared configs; `.gitconfig.local` is
+always excluded.
+
+The script copies files; it does not install applications or change the default
+shell. These are Linux configs using the standard `~/.config` location.
+
+## Keep the backup current
+
+Compare the managed configs without modifying either copy:
+
+```sh
+python3 scripts/compare_configs.py
+python3 scripts/compare_configs.py --diff
+```
+
+The default reports file status only. `--diff` shows repository-to-target text
+changes and can reveal sensitive values in live configs. Differences can reflect
+intentional portability edits; neither side is automatically newer or better.
+Use `--target /path/to/home` to compare another home directory.
+
+
+Edit the version in `home/` and restore it, or copy individual changed settings
+from your home directory back into their corresponding paths here. Review
+those changes before committing. Do not copy your entire home or `.config`
+directory: those contain credentials, caches, and application state.
+
+Git identity belongs in the untracked `~/.gitconfig.local`, included by the
+shared `.gitconfig`. Create that local file before restoring Git settings; see
+[identity migration and public export](docs/PUBLIC_RELEASE.md). No credentials, shell histories, browser profiles,
+private keys, or downloaded plugin trees are included. Secret-pattern checks
+are a useful aid, not a guarantee that future edits are safe to publish.
+
+Once reviewed, initialize Git locally if needed, inspect the files you stage,
+commit them, and connect your chosen GitHub repository. Git initialization,
+staging, commits, and publishing are left to you.
+
+## Validation
+
+```sh
+python3 -m unittest discover -s tests -v
+zsh -n home/.zshrc
+zsh -n home/.zshenv
+bash -n home/.bashrc
+sh -n home/.profile
+```
+
+See [validation notes](docs/VALIDATION.md) for the checks performed on this snapshot.
+
+For a fresh public snapshot and the future bootstrap interface, see
+[public release notes](docs/PUBLIC_RELEASE.md). No existing Git history is exported.

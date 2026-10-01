@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Preview restoration; pass --apply to copy configs and back up existing files."""
+import argparse
+from datetime import datetime, timezone
+from pathlib import Path
+import shutil
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--apply', action='store_true')
+parser.add_argument('--target', type=Path, default=Path.home())
+parser.add_argument('--profile', choices=['all', 'shell'], default='all',
+                    help='all shared configs (default), or Zsh and Starship only')
+args = parser.parse_args()
+repository = Path(__file__).resolve().parents[1]
+source = repository / 'home'
+target = args.target.expanduser().resolve()
+if target == repository or repository in target.parents:
+    raise SystemExit('Restore target must not be inside the repository.')
+backup = target / '.dotfiles-backups' / datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+if backup.parent.is_symlink():
+    raise SystemExit('Backup directory must not be a symlink.')
+if backup.parent.exists() and not backup.parent.is_dir():
+    raise SystemExit('Backup path must be a directory.')
+if target.exists() and not target.is_dir():
+    raise SystemExit('Target must be a directory.')
+entries = [p for p in source.rglob('*') if '.gitconfig.local' not in p.relative_to(source).parts]
+if args.profile == 'shell':
+    entries = [source / name for name in ('.zshrc', '.zshenv', '.config/starship.toml')]
+    if any(not p.is_file() for p in entries):
+        raise SystemExit('Shell profile is missing a required config file.')
+if any(p.is_symlink() for p in entries):
+    raise SystemExit('Source config tree must not contain symlinks.')
+files = sorted(p for p in entries if p.is_file())
+for src in files:
+    relative = src.relative_to(source)
+    dst = target / relative
+    # A repository below HOME is normal; only actual destination collisions
+    # must be rejected, before any files are moved or copied.
+    if dst == repository or repository in dst.parents or dst in repository.parents:
+        raise SystemExit(f'Restore destination overlaps the repository: {dst}')
+    if src.is_symlink():
+        raise SystemExit(f'Refusing source symlink: {src}')
+    if any(p.is_symlink() for p in dst.parents if p != target and target in p.parents):
+        raise SystemExit(f'Refusing destination under symlink: {dst}')
+    if dst.is_dir():
+        raise SystemExit(f'Destination is a directory: {dst}')
+    if any(p.exists() and not p.is_dir() for p in dst.parents):
+        raise SystemExit(f'Destination parent is not a directory: {dst}')
+for src in files:
+    relative = src.relative_to(source)
+    dst = target / relative
+    if dst.is_file() and not dst.is_symlink() and dst.read_bytes() == src.read_bytes():
+        print(f'UNCHANGED {relative}')
+        continue
+    print(f'{"COPY" if args.apply else "PREVIEW"} {relative} -> {dst}')
+    if not args.apply:
+        continue
+    if dst.exists() or dst.is_symlink():
+        saved = backup / relative
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(dst), str(saved))
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+print(f'{len(files)} files. Existing files are backed up under {backup} when replaced.')
