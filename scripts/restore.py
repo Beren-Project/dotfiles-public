@@ -8,8 +8,11 @@ import shutil
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--apply', action='store_true')
 parser.add_argument('--target', type=Path, default=Path.home())
-parser.add_argument('--profile', choices=['all', 'shell'], default='all',
-                    help='all shared configs (default), or Zsh and Starship only')
+selection = parser.add_mutually_exclusive_group()
+selection.add_argument('--profile', choices=['all', 'shell'],
+                       help='all shared configs (default), or Zsh and Starship only')
+selection.add_argument('--file', dest='files', action='append',
+                       help='Exact managed-files.txt entry to restore; repeat to select several')
 args = parser.parse_args()
 repository = Path(__file__).resolve().parents[1]
 source = repository / 'home'
@@ -28,7 +31,12 @@ if not names or len(set(names)) != len(names) or any(
         not name or Path(name).is_absolute() or '..' in Path(name).parts or
         '.gitconfig.local' in Path(name).parts for name in names):
     raise SystemExit('Invalid managed file manifest.')
-if args.profile == 'shell':
+if args.files:
+    unknown = list(dict.fromkeys(name for name in args.files if name not in names))
+    if unknown:
+        parser.error('Unknown or unmanaged --file value(s): ' + ', '.join(repr(name) for name in unknown))
+    names = list(dict.fromkeys(args.files))
+elif args.profile == 'shell':
     shell_names = ['.zshrc', '.zshenv', '.config/starship.toml']
     if not set(shell_names).issubset(names):
         raise SystemExit('Managed manifest is missing a shell config.')

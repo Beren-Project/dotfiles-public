@@ -83,6 +83,19 @@ Use `--profile shell` to restore only `.zshrc`, `.zshenv`, and Starship.
 The default `--profile all` restores all shared configs; `.gitconfig.local` is
 always excluded.
 
+Select individual managed configs with repeatable `--file` arguments:
+
+```sh
+python3 scripts/restore.py --file .zshrc --file .zshenv \
+  --file .gitconfig --file .tmux.conf --file .config/starship.toml
+```
+
+This previews only those five files; append `--apply` to restore the same
+selection with the usual backups and safety checks. Each value must exactly
+match `managed-files.txt`. Duplicates restore once, in sorted path order.
+`--file` cannot be combined with an explicit `--profile`. Without either
+selection option, all managed configs are restored as before.
+
 The script copies files; it does not install applications or change the default
 shell. These are Linux configs using the standard `~/.config` location.
 

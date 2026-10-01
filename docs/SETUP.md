@@ -112,6 +112,17 @@ Keep an existing terminal open while testing. The earlier project `.zshrc` is
 also preserved in the private archive under `reference/`; it is not part of the
 public export.
 
+To preview just the two Zsh startup files:
+
+```sh
+python3 scripts/restore.py --file .zshrc --file .zshenv
+```
+
+Append `--apply` for the same selection and normal backups. Repeat `--file`
+with exact `managed-files.txt` entries; duplicates restore once in sorted order.
+Use either individual files or an explicit `--profile`, never both. Omitting
+both keeps the default of restoring all managed configs.
+
 ## Everyday behavior
 
 - Shared history: commands from other terminals become available at the next
