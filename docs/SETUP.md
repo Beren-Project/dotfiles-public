@@ -1,9 +1,54 @@
 # Replacement-machine setup
 
+## Operating system and environment
+
+This project is developed for **Ubuntu first**, with Ubuntu on WSL2 as the
+current test environment. Native Ubuntu is also an intended target, but has not
+been separately validated. Other Linux distributions may need adapted package
+names and paths. Native Windows and macOS are outside the current target.
+
+Environment inspected on 2026-09-15:
+
+| Component | Observed value |
+| --- | --- |
+| Distribution | Ubuntu 26.04.1 LTS (`VERSION_ID=26.04`, `resolute`) |
+| Architecture | x86_64 |
+| Runtime | WSL2 |
+| Kernel | `6.18.33.2-microsoft-standard-WSL2` |
+| Zsh | 5.9 |
+| Python | 3.14.4 |
+
+These are observed versions, not minimum requirements. No Ubuntu release range
+has been validated. Check a replacement machine before following the setup:
+
+```sh
+cat /etc/os-release
+uname -srm
+zsh --version
+python3 --version
+```
+
+Run the repository tools inside Ubuntu, including when using Windows Terminal.
+The supplied Windows Terminal key binding is a host-terminal setting; it does
+not make the dotfiles a native Windows configuration.
+
+Platform assumptions to review when moving machines:
+
+- Ubuntu's global Zsh completion initialization is disabled by `.zshenv`, so
+  `.zshrc` can initialize once after adding custom completion directories.
+- Optional fzf integration uses Ubuntu package paths under
+  `/usr/share/doc/fzf/examples/`. The optional Neovim PATH entry assumes an
+  x86_64 installation at `/opt/nvim-linux-x86_64/bin`.
+- WSL's inherited Windows PATH entries are preserved. Startup timings can
+  therefore differ from native Ubuntu; see the recorded performance checks.
+
+The dependency report below checks executables and paths. It does not certify
+OS compatibility or install missing dependencies.
+
 ## Install and preview Zsh
 
-Install Zsh, Python 3, Git, Starship, and a Nerd Font for the terminal. This
-configuration targets Linux; it was checked with Zsh 5.9 and Starship 1.25.1.
+Install Zsh, Python 3, Git, Starship, and a Nerd Font for the terminal. The shell
+configuration was checked with Zsh 5.9 and Starship 1.25.1 on Ubuntu/WSL2.
 Oh My Zsh and a plugin manager are not required.
 
 Install the three standalone plugins explicitly:
@@ -27,11 +72,13 @@ you have tested the replacement. Downloaded plugins are not part of this backup.
 Preview the project configuration in a child shell without replacing live files:
 
 ```sh
-ZDOTDIR="$PWD/home" STARSHIP_CONFIG="$PWD/home/.config/starship.toml" zsh
+python3 scripts/preview_zsh.py
 ```
 
-This preview uses your real HOME, installed tools, and shared history. `exit`
-returns to your original shell. For an isolated test, restore into a temporary
+This preview copies `.zshenv` and `.zshrc` into a temporary ZDOTDIR, so generated
+completion caches stay outside `home/`. It uses the repository Starship config
+and your real HOME, installed tools, and shared history. `exit` returns to your
+original shell and removes the temporary directory. For an isolated test, restore into a temporary
 home and set HOME, ZDOTDIR, XDG_CONFIG_HOME, and XDG_DATA_HOME to paths there,
 as the test suite does.
 
@@ -58,7 +105,7 @@ python3 scripts/restore.py
 python3 scripts/restore.py --apply
 ```
 
-The restore command applies all managed configs, preserving changed originals
+The restore command applies only configs listed in `managed-files.txt`, preserving changed originals
 in `~/.dotfiles-backups/<timestamp>/`. Open a new terminal to load the result.
 To roll back Zsh, copy `.zshrc` and `.zshenv` from that backup into your home.
 Keep an existing terminal open while testing. The earlier project `.zshrc` is
@@ -70,8 +117,19 @@ public export.
 - Shared history: commands from other terminals become available at the next
   prompt. History keeps 10,000 entries; leading-space commands are excluded.
 - Emacs editing: Ctrl+A / Ctrl+E move to the start/end of the line.
-- Tab completion has a selection menu and case-insensitive matching. Insecure
+- Tab completion uses a static copy of this machine's eza 0.23.5 colors for basic
+  file kinds and common extensions: bold blue directories, plain ordinary files,
+  green executables, cyan symlinks, and file-type colors. This is a snapshot,
+  not automatic synchronization with future eza themes or every classification.
+  It also has a highlighted selection menu and
+  case-insensitive matching. Insecure
   completion directories are ignored by `compinit -i`, never blindly trusted.
+  Restore `.zshenv` and `.zshrc` together: `.zshenv` disables Ubuntu's earlier
+  global completion initialization so the completion cache can be reused.
+  Windows command directories remain on PATH.
+  See [startup profiling](ZSH_PROFILING.md) for measurements and reproduction
+  commands; terminal timings and agent-environment timings are reported separately.
+- When eza is installed, `ls` runs `eza`, `la` runs `eza -la`, and `ll` runs `eza -ll`.
 - Up/Down searches history by substring when the plugin is installed, otherwise
   it navigates ordinary history. Right arrow at the end accepts autosuggestions.
 - Shift+Enter inserts a newline if the terminal sends `ESC [ 13 ; 2 u`.
@@ -90,11 +148,44 @@ For Windows Terminal, add this action to its settings (not included in this repo
 
 ## Optional developer tools
 
+### WSL browser helpers
+
+Inside WSL (`WSL_DISTRO_NAME` is set), `edge <file>` and `chrome <file>` open one
+existing local file in the corresponding Windows browser. For example:
+
+```sh
+edge "notes with spaces.md"
+chrome report.html
+```
+
+Both call `_wsl_open_file`, which validates exactly one argument, resolves it
+with `realpath -e --`, verifies it is a regular file, and converts it with
+`wslpath -w`. Conversion failure stops the launch. Browser discovery first checks
+PATH for `msedge.exe` or `chrome.exe`, then the standard installation directories
+under `/mnt/c/Program Files` and `/mnt/c/Program Files (x86)`. For per-user or
+custom installations, add the browser's application directory to PATH.
+
+The helper passes the converted filename directly to the browser executable,
+avoiding CMD's interpretation of `%`, `&`, and other filename characters.
+It leaves the shell's working directory unchanged and starts the browser in the
+background. Browser output is suppressed; success means launch was dispatched,
+not that the browser finished loading the file. Windows/WSL interoperability
+must be enabled. These helpers open files, not URLs, and do not render Markdown
+themselves. Browser display behavior depends on the browser and its extensions.
+
+Tool lookup and conversion happen only when a helper is invoked. Startup only
+defines the functions; the existing PATH and completion audit policy remain.
+
+### Other integrations
+
 Cargo loads quietly from `.zshenv` when installed. Juliaup, uv, fnm, direnv,
 zoxide, and Ubuntu's fzf integration load only when their dependencies exist.
 Tool-generated environment files and `.zfunc` completions are not backed up;
 recreate them using their installers. Bash's existing optional broot integration
 is unchanged. Zsh includes `/opt/nvim-linux-x86_64/bin` only if it exists.
+
+Install eza to enable the `ls`, `la`, and `ll` aliases. The dependency report
+lists it as optional; missing eza leaves the system ls available.
 
 Install Git, delta, GitHub CLI, tmux, and Zellij for their captured settings.
 The Git credential helper uses `/usr/bin/gh`; adjust it for other installation

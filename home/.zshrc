@@ -19,27 +19,91 @@ unsetopt INC_APPEND_HISTORY INC_APPEND_HISTORY_TIME
 
 # Completion: compinit -i ignores insecure directories rather than trusting them.
 [[ -d "$HOME/.zfunc" ]] && fpath=("$HOME/.zfunc" $fpath)
+zmodload zsh/complist
 autoload -Uz compinit
 compinit -i
+# Snapshot of this machine's eza 0.23.5 palette; no subprocess at startup.
+# Cover basic file kinds and common extensions, retaining menu reverse video.
+zstyle ':completion:*' list-colors \
+  'no=0' 'fi=0' 'di=1;34' 'ln=36' 'or=36' 'ex=1;32' \
+  'pi=33' 'so=31' 'bd=1;33' 'cd=1;33' 'su=1;32' 'sg=1;32' \
+  'tw=1;34' 'ow=1;34' 'st=1;34' 'mi=0' \
+  '*.'{png,jpg,jpeg,gif,svg,webp,bmp,tiff,ico}'=35' \
+  '*.'{mp4,mkv,avi,mov,webm,flv,wmv}'=1;35' \
+  '*.'{mp3,ogg,m4a,aac}'=36' '*.'{flac,wav,alac}'=1;36' \
+  '*.'{pdf,doc,docx,odt,xls,xlsx,ods,ppt,pptx,odp}'=32' \
+  '*.'{zip,tar,gz,bz2,xz,zst,7z,rar,tgz}'=31' \
+  '*.'{py,rs,c,h,cpp,hpp,cc,java,js,jsx,ts,go,rb,lua,jl}'=1;33' \
+  '*.'{tmp,swp,swo,bak}'=2' '*~=2' \
+  '=(#i)(readme*|makefile|gnumakefile|cmakelists.txt|cargo.toml|package.json)=1;4;33'
 zstyle ':completion:*' menu select
 zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
 bindkey -e
 
 # Optional developer integrations.
+# Avoid populating Zsh's full command table across Windows PATH directories.
+if command -v eza >/dev/null 2>&1; then
+  alias ls='eza'
+  alias la='eza -la'
+  alias ll='eza -ll'
+fi
+
+# WSL local-file launchers. Resolve tools only when invoked, not at startup.
+if [[ -n ${WSL_DISTRO_NAME:-} ]]; then
+  _wsl_open_file() {
+    local browser=$1
+    shift
+    local label=${browser/msedge/edge}
+    if (( $# != 1 )); then
+      print -u2 -- "usage: $label <file>"
+      return 1
+    fi
+    local resolved file executable relative candidate
+    resolved=$(realpath -e -- "$1") || return 1
+    if [[ ! -f $resolved ]]; then
+      print -u2 -- "Not a regular file: $1"
+      return 1
+    fi
+    file=$(wslpath -w "$resolved") || return 1
+    case $browser in
+      msedge) relative='Microsoft/Edge/Application/msedge.exe' ;;
+      chrome) relative='Google/Chrome/Application/chrome.exe' ;;
+      *) print -u2 -- "Unsupported browser: $browser"; return 1 ;;
+    esac
+    executable=$(whence -p "$browser.exe")
+    if [[ -z $executable ]]; then
+      for candidate in "/mnt/c/Program Files/$relative" "/mnt/c/Program Files (x86)/$relative"; do
+        if [[ -f $candidate && -x $candidate ]]; then
+          executable=$candidate
+          break
+        fi
+      done
+    fi
+    if [[ -z $executable ]]; then
+      print -u2 -- "Cannot find $browser.exe; add its installation directory to PATH."
+      return 1
+    fi
+    # Direct argv passing avoids CMD expansion; do not wait for the browser UI.
+    "$executable" "$file" </dev/null >/dev/null 2>&1 &!
+  }
+  edge() { _wsl_open_file msedge "$@"; }
+  chrome() { _wsl_open_file chrome "$@"; }
+fi
+
 [[ -r "$HOME/.julia/juliaup/completions/zsh.zsh" ]] && source "$HOME/.julia/juliaup/completions/zsh.zsh"
-(( $+commands[fnm] )) && eval "$(fnm env --use-on-cd --shell zsh)"
-(( $+commands[direnv] )) && eval "$(direnv hook zsh)"
-(( $+commands[zoxide] )) && eval "$(zoxide init zsh)"
-if [[ -o zle && -t 0 ]] && (( $+commands[fzf] )); then
+command -v fnm >/dev/null 2>&1 && eval "$(fnm env --use-on-cd --shell zsh)"
+command -v direnv >/dev/null 2>&1 && eval "$(direnv hook zsh)"
+command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init zsh)"
+if [[ -o zle && -t 0 ]] && command -v fzf >/dev/null 2>&1; then
   [[ -r /usr/share/doc/fzf/examples/completion.zsh ]] && source /usr/share/doc/fzf/examples/completion.zsh
   [[ -r /usr/share/doc/fzf/examples/key-bindings.zsh ]] && source /usr/share/doc/fzf/examples/key-bindings.zsh
 fi
 export MERMAID_FILTER_PUPPETEER_CONFIG="$HOME/.config/mermaid/pptr.json"
-(( $+commands[mmdc] )) && alias mmdc='mmdc -p "$MERMAID_FILTER_PUPPETEER_CONFIG"'
+command -v mmdc >/dev/null 2>&1 && alias mmdc='mmdc -p "$MERMAID_FILTER_PUPPETEER_CONFIG"'
 
 # Prompt: retain Starship's appearance and collapse completed input to an arrow.
 PROMPT='%n@%m %~ %# '
-if (( $+commands[starship] )); then
+if command -v starship >/dev/null 2>&1; then
   autoload -Uz add-zsh-hook add-zle-hook-widget
   eval "$(starship init zsh)"
   _dotfiles_full_prompt=$PROMPT

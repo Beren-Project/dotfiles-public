@@ -23,14 +23,22 @@ if backup.parent.exists() and not backup.parent.is_dir():
     raise SystemExit('Backup path must be a directory.')
 if target.exists() and not target.is_dir():
     raise SystemExit('Target must be a directory.')
-entries = [p for p in source.rglob('*') if '.gitconfig.local' not in p.relative_to(source).parts]
+names = (repository / 'managed-files.txt').read_text().splitlines()
+if not names or len(set(names)) != len(names) or any(
+        not name or Path(name).is_absolute() or '..' in Path(name).parts or
+        '.gitconfig.local' in Path(name).parts for name in names):
+    raise SystemExit('Invalid managed file manifest.')
 if args.profile == 'shell':
-    entries = [source / name for name in ('.zshrc', '.zshenv', '.config/starship.toml')]
-    if any(not p.is_file() for p in entries):
-        raise SystemExit('Shell profile is missing a required config file.')
-if any(p.is_symlink() for p in entries):
-    raise SystemExit('Source config tree must not contain symlinks.')
-files = sorted(p for p in entries if p.is_file())
+    shell_names = ['.zshrc', '.zshenv', '.config/starship.toml']
+    if not set(shell_names).issubset(names):
+        raise SystemExit('Managed manifest is missing a shell config.')
+    names = shell_names
+files = sorted(source / name for name in names)
+for src in files:
+    if any(p.is_symlink() for p in (src, *src.parents)):
+        raise SystemExit(f'Source config path must not contain symlinks: {src}')
+    if not src.is_file():
+        raise SystemExit(f'Missing managed config file: {src}')
 for src in files:
     relative = src.relative_to(source)
     dst = target / relative

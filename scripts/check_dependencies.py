@@ -32,6 +32,7 @@ def report(root=ROOT, home=None, environ=None, out=sys.stdout):
         'delta':'required by configured Git pager and interactive diff filter',
         'gh':'configured Git credential helper; authentication is not checked',
         'starship':'optional prompt', 'tmux':'optional terminal multiplexer',
+        'eza':'optional ls, la, and ll aliases',
         'zellij':'optional terminal multiplexer', 'cargo':'optional Rust tools',
         'juliaup':'optional Julia manager', 'uv':'optional Python tools',
         'fnm':'optional Node manager', 'direnv':'optional directory environments',

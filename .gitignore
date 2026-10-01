@@ -14,3 +14,5 @@ __pycache__/
 
 .gitconfig.local
 public-export/
+public-export-*/
+home/.zcompdump*

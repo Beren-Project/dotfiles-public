@@ -7,15 +7,18 @@ from pathlib import Path
 import sys
 
 
-def compare(source, target, show_diff=False, out=sys.stdout):
+def compare(source, target, show_diff=False, out=sys.stdout, names=None):
     counts = Counter()
     error = False
-    for src in sorted(source.rglob('*')):
+    entries = source.rglob('*') if names is None else (source / name for name in names)
+    for src in sorted(entries):
         if '.gitconfig.local' in src.relative_to(source).parts:
             continue
-        if src.is_symlink():
+        if any(p.is_symlink() for p in (src, *src.parents)):
             raise ValueError(f'Unexpected source symlink: {src}')
         if src.is_dir():
+            if names is not None:
+                raise ValueError(f'Managed source is a directory: {src}')
             continue
         if not src.is_file():
             raise ValueError(f'Unexpected source file type: {src}')
@@ -70,7 +73,12 @@ def main():
         if not source.is_dir():
             raise ValueError(f'Missing managed config directory: {source}')
         # absolute() preserves symlinks so comparison can report them.
-        return compare(source, args.target.expanduser().absolute(), args.diff)
+        names = (source.parent/'managed-files.txt').read_text().splitlines()
+        if not names or len(set(names)) != len(names) or any(
+                not name or Path(name).is_absolute() or '..' in Path(name).parts or
+                '.gitconfig.local' in Path(name).parts for name in names):
+            raise ValueError('Invalid managed file manifest')
+        return compare(source, args.target.expanduser().absolute(), args.diff, names=names)
     except (OSError, ValueError) as exc:
         print(f'Comparison failed: {exc}', file=sys.stderr)
         return 2

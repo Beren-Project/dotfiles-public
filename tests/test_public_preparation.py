@@ -1,6 +1,8 @@
 import importlib.util
 import io
 import os
+import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -37,6 +39,7 @@ class PublicPreparationTests(unittest.TestCase):
             base=Path(tmp); repo=base/'repo'; target=base/'target'; target.mkdir()
             shutil.copytree(ROOT/'home',repo/'home'); (repo/'scripts').mkdir()
             shutil.copy2(ROOT/'scripts/restore.py',repo/'scripts/restore.py')
+            shutil.copy2(ROOT/'managed-files.txt', repo/'managed-files.txt')
             (repo/'home/.gitconfig.local').write_text('personal source')
             (target/'.gitconfig.local').write_text('personal target')
             (target/'.gitconfig').write_text('keep git')
@@ -77,6 +80,27 @@ class PublicPreparationTests(unittest.TestCase):
             self.assertFalse((destination/'.git').exists())
             self.assertFalse((destination/'reference').exists())
             self.assertFalse((destination/'home/.gitconfig.local').exists())
+            managed=set((destination/'managed-files.txt').read_text().splitlines())
+            self.assertEqual({name[5:] for name in names if name.startswith('home/')},managed)
+            for document in destination.rglob('*.md'):
+                for link in re.findall(r'\]\(([^)]+)\)',document.read_text()):
+                    if '://' in link or link.startswith('#'): continue
+                    path=link.split('#',1)[0]
+                    self.assertTrue((document.parent/path).exists(),f'{document.name}: missing {link}')
+                for script in re.findall(r'\bscripts/[A-Za-z0-9_-]+\.py\b', document.read_text()):
+                    self.assertTrue((destination/script).is_file(),f'{document.name}: missing {script}')
+            evidence=[p for p in actual if p.startswith('docs/benchmarks/')]
+            self.assertEqual(evidence,['docs/benchmarks/zsh-2026-09-17/summary.json'])
+            summary=json.loads((destination/evidence[0]).read_text())
+            self.assertIn('variants',summary)
+            for name in actual:
+                content=(destination/name).read_text()
+                self.assertNotIn(str(Path.home()),content,name)
+                self.assertNotRegex(content,r'/home/[a-zA-Z0-9_.-]+/',name)
+            for script in ['benchmark_zsh.py','profile_zsh.py','preview_zsh.py']:
+                help_result=subprocess.run([sys.executable,str(destination/'scripts'/script),'--help'],
+                    capture_output=True,text=True)
+                self.assertEqual(help_result.returncode,0,help_result.stderr)
             with self.assertRaises(FileExistsError): exporter.export(ROOT,destination)
 
 

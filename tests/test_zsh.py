@@ -4,14 +4,78 @@ import json
 import tomllib
 from pathlib import Path
 import pty
+import re
 import select
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+class TerminalIsolationTests(unittest.TestCase):
+    def test_captured_shell_tests_leave_the_controlling_tty_alone(self):
+        # Reproduce a terminal-launched/background suite in a PRIVATE PTY.
+        # The supervisor owns the foreground group; the test runner must not
+        # claim it or read terminal input through its interactive Zsh children.
+        names = [
+            'test_restore.RestoreTests.test_shell_preview_and_restore_ignore_unmanaged_files',
+            'test_zsh.ZshTests.test_completion_initializes_once_and_reuses_cache',
+        ]
+        for name in names:
+            with self.subTest(test=name), tempfile.TemporaryDirectory() as tmp:
+                pid, fd = pty.fork()
+                if pid == 0:
+                    try:
+                        env = {'HOME': tmp, 'TMPDIR': tmp, 'PATH': '/usr/bin:/bin',
+                               'TERM': 'xterm-256color', 'LANG': 'C.UTF-8',
+                               'PYTHONDONTWRITEBYTECODE': '1', 'NO_COLOR': '1'}
+                        runner = subprocess.Popen(
+                            [sys.executable, '-B', '-m', 'unittest', name, '-v'],
+                            cwd=ROOT/'tests', env=env, process_group=0)
+                        _, status = os.waitpid(runner.pid, os.WUNTRACED)
+                        if os.WIFSTOPPED(status):
+                            print('TTY_STOP:' + signal.Signals(os.WSTOPSIG(status)).name, flush=True)
+                            os.killpg(runner.pid, signal.SIGKILL)
+                            os.waitpid(runner.pid, 0)
+                            os._exit(1)
+                        if os.tcgetpgrp(0) != os.getpgrp():
+                            print('TTY_FOREGROUND_CHANGED', flush=True)
+                            os._exit(1)
+                        os._exit(os.waitstatus_to_exitcode(status))
+                    except BaseException:
+                        os._exit(2)
+                output = bytearray()
+                status = None
+                try:
+                    deadline = time.monotonic()+15
+                    while time.monotonic() < deadline:
+                        if select.select([fd], [], [], 0.1)[0]:
+                            try:
+                                chunk = os.read(fd, 65536)
+                            except OSError:
+                                chunk = b''
+                            # PTY EOF can arrive just before the child is reaped.
+                            output.extend(chunk)
+                        waited, value = os.waitpid(pid, os.WNOHANG)
+                        if waited:
+                            status = value
+                            break
+                    if status is None:
+                        waited, value = os.waitpid(pid, os.WNOHANG)
+                        if waited: status = value
+                    self.assertIsNotNone(status, output.decode(errors='replace'))
+                    text = output.decode(errors='replace')
+                    self.assertEqual(os.waitstatus_to_exitcode(status), 0, text)
+                    self.assertNotIn('\x1b', text, text)  # No prompt escapes leaked to the PTY.
+                finally:
+                    if status is None:
+                        os.kill(pid, signal.SIGKILL)
+                        os.waitpid(pid, 0)
+                    os.close(fd)
 
 class Shell:
     def __init__(self, home, env):
@@ -57,14 +121,161 @@ class ZshTests(unittest.TestCase):
 
     def tearDown(self): self.tmp.cleanup()
 
+    def run_zsh(self, command, **kwargs):
+        options = {'env': self.env, 'cwd': self.home, 'capture_output': True, 'text': True}
+        options.update(kwargs)
+        # Captured interactive probes must not inherit stdin OR a controlling
+        # TTY. Keep -i (and global startup files) to test the actual shell setup.
+        return subprocess.run(command, stdin=subprocess.DEVNULL,
+                              start_new_session=True, timeout=10, **options)
+
+    def profile_startup(self):
+        # Include /etc/zsh/zshrc: -d would hide Ubuntu's duplicate compinit.
+        result = self.run_zsh(['zsh', '-i', '-c',
+            'print -- CUSTOM:${_comps[probe]} EXTRA:${_comps[extra]}; zprof'],
+            env=self.env, cwd=self.home, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        rows = result.stdout.split('-----------------------------------------------------------------------------------')[1]
+        counts = {match[2]: int(match[1]) for match in re.findall(
+            r'^\s*(\d+)\)\s+(\d+)\s+.*?\s+(\w+)\s*$', rows, re.MULTILINE)}
+        return result.stdout, counts
+
+    def test_completion_initializes_once_and_reuses_cache(self):
+        config = self.home/'.zshenv'
+        config.write_text('zmodload zsh/zprof\n' + config.read_text())
+        custom = self.home/'.zfunc'; custom.mkdir()
+        (custom/'_probe').write_text('#compdef probe\n_arguments "1:target:(alpha beta)"\n')
+        output, counts = self.profile_startup()
+        self.assertIn('CUSTOM:_probe', output)
+        self.assertEqual(counts.get('compinit', 0), 1)
+        self.assertEqual(counts.get('compdump', 0), 1)
+        dump = self.home/'.zcompdump'
+        original = (dump.read_bytes(), dump.stat().st_mtime_ns)
+        _, counts = self.profile_startup()
+        self.assertEqual(counts.get('compinit', 0), 1)
+        self.assertGreater(counts.get('compaudit', 0), 0)
+        self.assertEqual(counts.get('compdump', 0), 0)
+        self.assertEqual((dump.read_bytes(), dump.stat().st_mtime_ns), original)
+        (custom/'_extra').write_text('#compdef extra\n_arguments "1:target:(gamma)"\n')
+        output, counts = self.profile_startup()
+        self.assertIn('EXTRA:_extra', output)
+        self.assertEqual(counts.get('compinit', 0), 1)
+        self.assertEqual(counts.get('compdump', 0), 1)
+
+    def test_insecure_completion_directory_is_ignored(self):
+        custom = self.home/'.zfunc'; custom.mkdir(mode=0o777)
+        custom.chmod(0o777)
+        (custom/'_probe').write_text('#compdef probe\nprint UNTRUSTED_COMPLETION\n')
+        result = self.run_zsh(['zsh', '-i', '-c', 'print -- REGISTERED:${+_comps[probe]}'],
+            env=self.env, cwd=self.home, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        self.assertEqual(result.stdout, 'REGISTERED:0\n')
+
+    def test_completion_directory_colors_and_selection(self):
+        for name in ['folder-alpha', 'folder-beta']:
+            (self.home/name).mkdir()
+        shell = Shell(self.home, self.env)
+        try:
+            output = shell.send('cd folder-\t\t')
+            self.assertIn('folder-alpha', output)
+            self.assertIn('folder-beta', output)
+            # Check a foreground color on the actual directory listing,
+            # independently of prompt colors or selection reverse video.
+            self.assertIn('\x1b[1;34mfolder-alpha', output)
+            self.assertRegex(output, r'\x1b\[(?:[0-9]+;)*7m')
+            shell.send('\t')
+            shell.send('\n')  # Accept the menu selection into the command line.
+            shell.send('\n')  # Execute cd.
+            output = shell.send('print -- SELECTED:${PWD:t}\n')
+            self.assertIn('SELECTED:folder-beta', output)
+            shell.send('cd ..\n')
+            for name in ['palette-plain', 'palette-code.py', 'palette-image.png', 'palette-archive.zip']:
+                (self.home/name).touch()
+            output = shell.send('print palette-\t\t')
+            for color, name in [('1;33', 'palette-code.py'), ('35', 'palette-image.png'),
+                                ('31', 'palette-archive.zip')]:
+                self.assertIn(f'\x1b[{color}m{name}', output)
+        finally:
+            shell.close()
+
+    def test_optional_tools_and_inherited_path(self):
+        bindir = self.home/'bin'; bindir.mkdir()
+        for name in ['fnm', 'direnv', 'zoxide']:
+            tool = bindir/name
+            tool.write_text(f'#!/bin/sh\nprintf "typeset -g PROBE_{name}=loaded\\n"\n')
+            tool.chmod(0o755)
+        eza = bindir/'eza'
+        eza.write_text('#!/bin/sh\nprintf "EZA_ARGS:%s\\n" "$*"\n')
+        eza.chmod(0o755)
+        env = {**self.env, 'PATH': self.env['PATH'] + ':/mnt/c/Windows/System32'}
+        result = self.run_zsh(['zsh', '-i', '-c',
+            'print -- $PROBE_fnm $PROBE_direnv $PROBE_zoxide; print -l -- $path; ls; la'],
+            env=env, cwd=self.home, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        self.assertIn('loaded loaded loaded\n', result.stdout)
+        self.assertIn('/mnt/c/Windows/System32\n', result.stdout)
+        self.assertIn('EZA_ARGS:\n', result.stdout)
+        self.assertIn('EZA_ARGS:-la\n', result.stdout)
+
     def test_minimal_startup_and_bindings(self):
         code = "print -- $options[sharehistory] $options[incappendhistory]; whence compdef; bindkey '^A'; bindkey '^[[A'; bindkey '^[[13;2u'; print -- ${+functions[TRAPINT]}"
-        r=subprocess.run(['zsh','-d','-i','-c',code],env=self.env,cwd=self.home,capture_output=True,text=True)
+        r=self.run_zsh(['zsh','-d','-i','-c',code],env=self.env,cwd=self.home,capture_output=True,text=True)
         self.assertEqual(r.returncode,0,r.stderr)
         self.assertEqual(r.stderr,'')
         for expected in ['on off','compdef','beginning-of-line','up-line-or-history','_dotfiles_insert_newline']:
             self.assertIn(expected,r.stdout)
         self.assertTrue(r.stdout.endswith('0\n'))
+
+    def test_wsl_browser_helpers(self):
+        bindir = self.home/'bin'; bindir.mkdir()
+        log = self.home/'browser.jsonl'
+        converter = bindir/'wslpath'
+        converter.write_text('#!/usr/bin/python3\nimport sys\n'
+            'if "conversion-fails" in sys.argv[2]: sys.exit(7)\n'
+            'print("WIN:" + sys.argv[2])\n')
+        converter.chmod(0o755)
+        for browser in ['msedge', 'chrome']:
+            executable = bindir/(browser + '.exe')
+            executable.write_text('#!/usr/bin/python3\nimport sys,json\n'
+                + f'with open({str(log)!r}, "a") as f: f.write(json.dumps(sys.argv) + "\\n")\n')
+            executable.chmod(0o755)
+        env = {**self.env, 'WSL_DISTRO_NAME': 'TestUbuntu'}
+        for browser in ['edge', 'chrome']:
+            for filename in ['notes with spaces.md', '-notes.md', 'notes %TEMP% & !.txt']:
+                with self.subTest(browser=browser, filename=filename):
+                    target = self.home/filename; target.touch()
+                    before = len(log.read_text().splitlines()) if log.exists() else 0
+                    result = self.run_zsh(['zsh', '-d', '-i', '-c',
+                        f'{browser} "$1"; result=$?; print -r -- "$PWD"; exit $result',
+                        'test', filename], env=env, cwd=self.home, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, str(self.home) + '\n')
+                    self.assertEqual(result.stderr, '')
+                    deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline:
+                        entries = log.read_text().splitlines() if log.exists() else []
+                        if len(entries) > before: break
+                        time.sleep(0.01)
+                    self.assertEqual(len(entries), before + 1)
+                    argv = json.loads(entries[-1])
+                    self.assertEqual(Path(argv[0]).name, ('msedge' if browser == 'edge' else browser) + '.exe')
+                    self.assertEqual(argv[1:], ['WIN:' + str(target)])
+        original = log.read_bytes()
+        (self.home/'conversion-fails').touch()
+        for browser in ['edge', 'chrome']:
+            for args in [[], ['missing.md'], ['.'], ['conversion-fails'], ['one', 'two']]:
+                with self.subTest(browser=browser, args=args):
+                    result = self.run_zsh(['zsh', '-d', '-i', '-c', f'{browser} "$@"', 'test', *args],
+                        env=env, cwd=self.home, capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(log.read_bytes(), original)
+        result = self.run_zsh(['zsh', '-d', '-i', '-c',
+            'print -- ${+functions[edge]} ${+functions[chrome]}'],
+            env=self.env, cwd=self.home, capture_output=True, text=True)
+        self.assertEqual(result.stdout, '0 0\n')
 
     def test_starship_pty_status_and_input(self):
         starship=shutil.which('starship')
@@ -158,7 +369,7 @@ class ZshTests(unittest.TestCase):
         if not plugin_source:
             self.skipTest('Set DOTFILES_TEST_PLUGINS to an installed pinned plugin directory')
         shutil.copytree(plugin_source, self.home/'.local/share/zsh/plugins')
-        r = subprocess.run(['zsh','-d','-i','-c',
+        r = self.run_zsh(['zsh','-d','-i','-c',
             "print -- ${+widgets[history-substring-search-up]} ${+functions[_zsh_autosuggest_start]} ${+functions[_zsh_highlight]}; bindkey '^[[A'"],
             env=self.env, cwd=self.home, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)

@@ -63,6 +63,10 @@ class ReportTests(unittest.TestCase):
                 self.assertIn('UNREADABLE',output.getvalue())
             (source/'link').symlink_to(source/'file')
             with self.assertRaises(ValueError): comparison.compare(source,target,out=io.StringIO())
+            (source/'directory').mkdir()
+            for name in ['missing', 'directory']:
+                with self.assertRaises(ValueError):
+                    comparison.compare(source,target,out=io.StringIO(),names=[name])
 
     def test_dependency_paths_and_xdg(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -80,6 +84,11 @@ class ReportTests(unittest.TestCase):
             self.assertIn('FOUND: zsh',out.getvalue()); self.assertIn('MISSING: delta',out.getvalue())
             self.assertIn('PATH MISMATCH:',out.getvalue()); self.assertIn(f'FOUND: {plugin}',out.getvalue())
             self.assertIn('optional generated integration file',out.getvalue())
+            self.assertIn('MISSING: eza',out.getvalue())
+            eza=bindir/'eza'; eza.write_text('#!/bin/sh\nexit 99\n'); eza.chmod(0o755)
+            available=io.StringIO()
+            dependencies.report(base,base/'live',{'PATH':str(bindir),'XDG_DATA_HOME':str(data)},available)
+            self.assertIn('FOUND: eza',available.getvalue())
             with patch.object(dependencies,'report',side_effect=OSError('fixture')):
                 with patch.object(sys,'argv',['check_dependencies.py']), contextlib.redirect_stderr(io.StringIO()):
                     self.assertEqual(dependencies.main(),2)

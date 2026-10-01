@@ -1,0 +1,9 @@
+.bashrc
+.config/mermaid/pptr.json
+.config/starship.toml
+.config/zellij/config.kdl
+.gitconfig
+.profile
+.tmux.conf
+.zshenv
+.zshrc
