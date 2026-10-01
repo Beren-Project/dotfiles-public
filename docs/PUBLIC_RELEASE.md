@@ -145,20 +145,30 @@ Downloaded configs have one maintained source here, rather than duplicated
 editable copies in bootstrap.
 
 After bootstrap installs Python 3, Git, Zsh, Starship, and other desired tools,
-run from the pinned checkout:
+create `~/.gitconfig.local` as described under
+[personal Git identity](#personal-git-identity) before restoring `.gitconfig`.
+Then run from the pinned checkout:
 
 ```sh
 python3 scripts/check_dependencies.py
 python3 scripts/install_zsh_plugins.py
-python3 scripts/restore.py --profile shell
-python3 scripts/restore.py --profile shell --apply
+python3 scripts/restore.py \
+  --file .zshrc --file .zshenv --file .gitconfig \
+  --file .tmux.conf --file .config/starship.toml
+python3 scripts/restore.py \
+  --file .zshrc --file .zshenv --file .gitconfig \
+  --file .tmux.conf --file .config/starship.toml --apply
 ```
 
-The shell profile includes exactly `.zshrc`, `.zshenv`, and
+The future `ubuntu-bootstrap` selection is exactly those five managed configs.
+Each `--file` must match `managed-files.txt`; duplicates restore once, and an
+explicit `--profile` cannot be combined with `--file`.
+
+The separate `--profile shell` preset includes `.zshrc`, `.zshenv`, and
 `.config/starship.toml`. The default `--profile all` restores all shared managed
-configs. Both retain preview, backups, and conflict protections. `--target PATH`
-selects a different destination home; it does not change the Git include's home
-resolution when Git later reads the config.
+configs. All selection modes retain preview, backups, and conflict protections.
+`--target PATH` selects a different destination home; it does not change the Git
+include's home resolution when Git later reads the config.
 
 The plugin installer installs the revisions in this checkout's plugin manifest.
 It does not install the applications themselves. Bootstrap remains responsible

@@ -158,6 +158,16 @@ bash -n home/.bashrc
 sh -n home/.profile
 ```
 
+If standalone plugins are installed, include their integration checks:
+
+```sh
+DOTFILES_TEST_PLUGINS="${XDG_DATA_HOME:-$HOME/.local/share}/zsh/plugins" \
+  python3 -B -m unittest discover -s tests -v
+```
+
+Without that variable, the standalone-plugin integration test is skipped.
+Starship-specific tests are also skipped when Starship is unavailable.
+
 See [validation notes](docs/VALIDATION.md) for the checks performed on this snapshot.
 
 For a fresh public snapshot and the future bootstrap interface, see

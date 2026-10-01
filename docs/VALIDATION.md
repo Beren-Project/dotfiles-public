@@ -1,5 +1,33 @@
 # Validation
 
+## Selective restore and public maintenance — 2026-10-01
+
+Repeatable `restore.py --file` arguments select exact entries from
+`managed-files.txt`. Regressions cover one file and the future five-config
+bootstrap selection, preview without writes, changes/backups limited to the
+selection, duplicate deduplication in sorted order, and rejection of unknown,
+unmanaged, or unsafe values before copying. They also verify both existing
+profiles, exclusion of explicit `--profile` plus `--file`, managed-manifest
+validation, source existence/type/symlink checks, destination conflicts and
+overlap checks, file-symlink backups, and unchanged-file repeat behavior.
+
+At this checkpoint the managed manifest contained nine configs and the public
+allowlist contained 35 files. Public export regression checks verify exact
+membership, documentation links, referenced tools, and private-file exclusion.
+Current validation commands use `-B` to avoid bytecode caches that would block
+public sync under its unchanged dirty/ignored-file policy:
+
+```sh
+DOTFILES_TEST_PLUGINS="${XDG_DATA_HOME:-$HOME/.local/share}/zsh/plugins" \
+  python3 -B -m unittest discover -s tests -v
+```
+
+The complete suite passed in the private repository: **55 tests, no skips,
+31.515 seconds**, with installed standalone plugins enabled. All 15 Python
+scripts/test modules compiled; the four documented shell syntax checks and
+`git diff --check` passed. The real public repository and live configs were not
+modified, and no changes were staged, committed, or pushed.
+
 ## Test controlling-TTY isolation — 2026-10-01
 
 The restore preview test reproduced a ten-second timeout when launched from a
