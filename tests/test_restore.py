@@ -96,7 +96,7 @@ class RestoreTests(unittest.TestCase):
             base = Path(tmp); repo = base/'repo'; user = base/'user'; user.mkdir()
             shutil.copytree(ROOT/'home', repo/'home')
             (repo/'scripts').mkdir()
-            for script in ['restore.py', 'preview_zsh.py', 'compare_configs.py']:
+            for script in ['restore.py', 'preview_zsh.py', 'compare_configs.py', 'terminal_colors.py']:
                 shutil.copy2(ROOT/'scripts'/script, repo/'scripts'/script)
             shutil.copy2(ROOT/'managed-files.txt', repo/'managed-files.txt')
             before = {p.relative_to(repo/'home'):p.read_bytes() for p in (repo/'home').rglob('*') if p.is_file()}

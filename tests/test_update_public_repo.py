@@ -1,12 +1,17 @@
 """Public synchronization uses only disposable source trees and Git repositories."""
+import errno
 import importlib.util
 import io
 import os
 from pathlib import Path
+import pty
+import re
+import select
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -22,6 +27,67 @@ def state(root):
     return {str(path.relative_to(root)): (path.read_bytes(), path.stat().st_mode,
                                          path.stat().st_mtime_ns)
             for path in root.rglob('*') if path.is_file() and not path.is_symlink()}
+
+
+def without_colors(text):
+    return re.sub(r'\x1b\[[0-9;]*m', '', text)
+
+
+class ColorRenderingTests(unittest.TestCase):
+    def test_color_policy_modes_tty_and_no_color_presence(self):
+        for mode in ['auto', 'always', 'never']:
+            for tty in [False, True]:
+                for no_color in [None, '', '1']:
+                    with self.subTest(mode=mode, tty=tty, no_color=no_color):
+                        out = io.StringIO()
+                        out.isatty = lambda: tty
+                        env = {} if no_color is None else {'NO_COLOR': no_color}
+                        with patch.dict(os.environ, env, clear=True):
+                            expected = no_color is None and (
+                                mode == 'always' or mode == 'auto' and tty)
+                            self.assertEqual(updater.color_enabled(mode, out), expected)
+
+    def test_auto_stream_without_isatty_is_plain(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(updater.color_enabled('auto', object()))
+
+    def test_rendering_preserves_plan_and_plain_text(self):
+        before = {
+            'changed': (b'+ context - embedded\n--- context\n+++ context\n-- old', 0o644),
+            'gone': (b'deleted\n', 0o644),
+        }
+        after = {
+            'changed': (b'+ context - embedded\n--- context\n+++ context\n++ new', 0o755),
+            'added': (b'added\n', 0o644),
+        }
+        plain, colored = io.StringIO(), io.StringIO()
+        plain_plan = updater.show_plan(before, after, {'obsolete'}, set(), True, plain)
+        color_plan = updater.show_plan(before, after, {'obsolete'}, set(), True, colored,
+                                       updater.TerminalColors(True))
+        output = colored.getvalue()
+        self.assertEqual(plain_plan, color_plan)
+        self.assertEqual(without_colors(output), plain.getvalue())
+        self.assertNotIn('\x1b', plain.getvalue())
+        for code, label in [(32, 'ADD'), (33, 'CHANGE'), (31, 'DELETE'), (35, 'RMDIR')]:
+            self.assertIn(f'\x1b[{code}m{label}\x1b[0m', output)
+        for code, line in [
+            (31, "--- public/'changed'"), (32, "+++ snapshot/'changed'"),
+            (36, '@@ -1,4 +1,4 @@'), (31, '--- old'), (32, '+++ new'),
+            (31, '-deleted'), (32, '+added'),
+        ]:
+            self.assertIn(f'\x1b[{code}m{line}\x1b[0m\n', output)
+        for line in [' + context - embedded', ' --- context', ' +++ context',
+                     '\\ No newline at end of file', '  mode 0644 -> 0755']:
+            self.assertIn(line, output.splitlines())
+        self.assertTrue(output.splitlines()[-1].startswith('Summary:'))
+        self.assertNotIn('\x1b', output.splitlines()[-1])
+
+    def test_style_resets_before_line_endings(self):
+        colors = updater.TerminalColors(True)
+        for ending in ['', '\n', '\r\n']:
+            with self.subTest(ending=ending):
+                self.assertEqual(colors.paint('+line'+ending, 32),
+                                 '\x1b[32m+line\x1b[0m'+ending)
 
 
 class UpdatePublicRepoTests(unittest.TestCase):
@@ -73,6 +139,49 @@ class UpdatePublicRepoTests(unittest.TestCase):
         out = io.StringIO()
         updater.update(self.source, self.target, out=out, **kwargs)
         return out.getvalue()
+
+    def cli_fixture(self):
+        scripts = self.source/'scripts'
+        scripts.mkdir(exist_ok=True)
+        for name in ['update_public_repo.py', 'export_public.py', 'terminal_colors.py']:
+            shutil.copy2(ROOT/'scripts'/name, scripts/name)
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith('GIT_') and key != 'NO_COLOR'}
+        command = [sys.executable, '-B', str(scripts/'update_public_repo.py'), '--diff']
+        return command, env
+
+    def tty_output(self, command, env):
+        master, slave = pty.openpty()
+        try:
+            with subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL,
+                                  stdout=slave, stderr=subprocess.PIPE,
+                                  start_new_session=True) as child:
+                os.close(slave)
+                slave = None
+                output = bytearray()
+                deadline = time.monotonic()+10
+                while time.monotonic() < deadline:
+                    if not select.select([master], [], [], 0.1)[0]:
+                        continue
+                    try:
+                        chunk = os.read(master, 65536)
+                    except OSError as exc:
+                        if exc.errno != errno.EIO:
+                            raise
+                        break  # Linux PTYs report EIO when their slave closes.
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+                else:
+                    child.kill()
+                    self.fail('CLI did not finish in its disposable PTY')
+                _, stderr = child.communicate(timeout=10)
+                self.assertEqual(child.returncode, 0, stderr)
+                return output.decode()
+        finally:
+            os.close(master)
+            if slave is not None:
+                os.close(slave)
 
     def assert_refused_unchanged(self, **kwargs):
         before = state(self.target)
@@ -263,9 +372,95 @@ class UpdatePublicRepoTests(unittest.TestCase):
         self.sync(apply=True)
         self.assertEqual((self.target/'added.txt').read_bytes(), b'\x00\xff')
 
+    def test_binary_and_non_utf8_suppression_with_colors(self):
+        for contents in [b'binary\x00payload', b'invalid\xffpayload']:
+            for mode in ['auto', 'always', 'never']:
+                with self.subTest(contents=contents, mode=mode):
+                    (self.source/'added.txt').write_bytes(contents)
+                    with patch.dict(os.environ, {}, clear=True):
+                        output = self.sync(show_diff=True, color=mode)
+                    self.assertIn('  Binary or non-UTF-8 contents differ; diff omitted.\n', output)
+                    self.assertNotIn("+++ snapshot/'added.txt'", output)
+                    self.assertNotIn('payload', output)
+        for mode in ['auto', 'always', 'never']:
+            with self.subTest(apply_mode=mode):
+                clone = self.base/f'binary-{mode}'
+                shutil.copytree(self.target, clone)
+                updater.update(self.source, clone, apply=True, show_diff=True,
+                               out=io.StringIO(), color=mode)
+                self.assertEqual((clone/'added.txt').read_bytes(), contents)
+
+    def test_cli_captured_and_redirected_color_modes(self):
+        command, env = self.cli_fixture()
+        command += ['--target', str(self.target)]
+        before, source_before = state(self.target), state(self.source)
+        for option, colored in [(None, False), ('auto', False), ('always', True), ('never', False)]:
+            with self.subTest(option=option):
+                args = command if option is None else command+[f'--color={option}']
+                result = subprocess.run(args, env=env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual('\x1b[' in result.stdout, colored)
+                self.assertIn("ADD     'added.txt'", without_colors(result.stdout))
+        with (self.base/'diff.txt').open('w') as output:
+            result = subprocess.run(command, env=env, stdout=output,
+                                    stderr=subprocess.PIPE, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('\x1b', (self.base/'diff.txt').read_text())
+        self.assertEqual(state(self.target), before)
+        self.assertEqual(state(self.source), source_before)
+
+    def test_cli_tty_modes_and_no_color(self):
+        command, env = self.cli_fixture()
+        command += ['--target', str(self.target)]
+        before, source_before = state(self.target), state(self.source)
+        for option, colored in [(None, True), ('auto', True), ('always', True), ('never', False)]:
+            with self.subTest(option=option):
+                args = command if option is None else command+[f'--color={option}']
+                self.assertEqual('\x1b[' in self.tty_output(args, env), colored)
+        for value in ['', '1']:
+            for mode in ['auto', 'always', 'never']:
+                with self.subTest(no_color=value, mode=mode):
+                    args = command+[f'--color={mode}']
+                    no_color_env = {**env, 'NO_COLOR': value}
+                    self.assertNotIn('\x1b', self.tty_output(args, no_color_env))
+                    captured = subprocess.run(args, env=no_color_env, capture_output=True,
+                                              text=True, timeout=10)
+                    self.assertEqual(captured.returncode, 0, captured.stderr)
+                    self.assertNotIn('\x1b', captured.stdout)
+        self.assertEqual(state(self.target), before)
+        self.assertEqual(state(self.source), source_before)
+
+    def test_cli_apply_results_and_exit_codes_across_color_modes(self):
+        command, env = self.cli_fixture()
+        (self.source/'added.txt').chmod(0o755)
+        expected_files = {
+            name: ((self.source/name).read_bytes(), (self.source/name).stat().st_mode & 0o777)
+            for name in (self.source/'public-files.txt').read_text().splitlines()
+        }
+        source_before = state(self.source)
+        for mode in ['auto', 'always', 'never']:
+            with self.subTest(mode=mode):
+                clone = self.base/f'apply-{mode}'
+                shutil.copytree(self.target, clone)
+                git_before = state(clone/'.git')
+                args = command+['--target', str(clone), '--apply', f'--color={mode}']
+                applied = subprocess.run(args, env=env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(applied.returncode, 0, applied.stderr)
+                self.assertEqual('\x1b[' in applied.stdout, mode == 'always')
+                files, directories = updater.inventory(clone, preserve_git=True)
+                self.assertEqual(files, expected_files)
+                self.assertEqual(directories, {'home'})
+                self.assertEqual(state(clone/'.git'), git_before)
+                before_refusal = state(clone)
+                refused = subprocess.run(args, env=env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(refused.returncode, 2)
+                self.assertIn('not clean', refused.stderr)
+                self.assertEqual(state(clone), before_refusal)
+        self.assertEqual(state(self.source), source_before)
+
     def test_cli_default_destination_and_git_environment_overrides(self):
         (self.base/'repo/scripts').mkdir(parents=True)
-        for name in ['update_public_repo.py', 'export_public.py']:
+        for name in ['update_public_repo.py', 'export_public.py', 'terminal_colors.py']:
             shutil.copy2(ROOT/'scripts'/name, self.base/'repo/scripts'/name)
         shutil.copytree(self.source, self.base/'repo', dirs_exist_ok=True)
         (self.base/'project').mkdir()

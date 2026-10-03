@@ -96,6 +96,17 @@ changes from `public/...` to `snapshot/...`; binary/non-UTF-8 contents are not
 dumped. Exit 0 means preview/apply succeeded, even if preview reports differences;
 exit 2 means a safety check or operation failed.
 
+`--color {auto,always,never}` defaults to `auto`: status labels and unified diffs
+use Git-like ANSI colors when stdout is a terminal. Redirected or piped output
+stays plain. `always` preserves colors through pipes; `never` disables them.
+Presence of `NO_COLOR`, even with an empty value, disables colors in every mode,
+including `always`.
+
+```sh
+python3 scripts/update_public_repo.py --diff --color=always | less -R
+python3 scripts/update_public_repo.py --diff --color=never > diff.txt
+```
+
 Apply mirrors file contents and permissions, including hidden files. All files
 outside the current snapshot and obsolete directories are removed, except the
 root `.git/` directory, which is never copied, changed, or traversed by the sync.

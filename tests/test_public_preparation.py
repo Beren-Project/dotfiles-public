@@ -9,13 +9,16 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def module(name):
     spec = importlib.util.spec_from_file_location(name, ROOT/'scripts'/f'{name}.py')
-    result = importlib.util.module_from_spec(spec); spec.loader.exec_module(result)
+    result = importlib.util.module_from_spec(spec)
+    with patch.object(sys, 'path', [str(ROOT/'scripts'), *sys.path]):
+        spec.loader.exec_module(result)
     return result
 
 
@@ -77,6 +80,7 @@ class PublicPreparationTests(unittest.TestCase):
             names=set((ROOT/'public-files.txt').read_text().splitlines())
             actual={str(p.relative_to(destination)) for p in destination.rglob('*') if p.is_file()}
             self.assertEqual(actual,names)
+            self.assertIn('scripts/terminal_colors.py', names)
             self.assertFalse((destination/'.git').exists())
             self.assertFalse((destination/'reference').exists())
             self.assertFalse((destination/'home/.gitconfig.local').exists())
@@ -97,10 +101,20 @@ class PublicPreparationTests(unittest.TestCase):
                 content=(destination/name).read_text()
                 self.assertNotIn(str(Path.home()),content,name)
                 self.assertNotRegex(content,r'/home/[a-zA-Z0-9_.-]+/',name)
-            for script in ['benchmark_zsh.py','profile_zsh.py','preview_zsh.py']:
+            for script in ['benchmark_zsh.py','profile_zsh.py','preview_zsh.py',
+                           'compare_configs.py','update_public_repo.py']:
                 help_result=subprocess.run([sys.executable,str(destination/'scripts'/script),'--help'],
                     capture_output=True,text=True)
                 self.assertEqual(help_result.returncode,0,help_result.stderr)
+            target = Path(tmp)/'target'
+            target.mkdir()
+            compared = subprocess.run(
+                [sys.executable, '-B', str(destination/'scripts/compare_configs.py'),
+                 '--target', str(target), '--diff', '--color=always'],
+                env={key: value for key, value in os.environ.items() if key != 'NO_COLOR'},
+                capture_output=True, text=True, timeout=10)
+            self.assertEqual(compared.returncode, 1, compared.stderr)
+            self.assertIn('\x1b[31mMISSING\x1b[0m', compared.stdout)
             with self.assertRaises(FileExistsError): exporter.export(ROOT,destination)
 
 

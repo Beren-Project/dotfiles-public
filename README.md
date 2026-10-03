@@ -106,12 +106,19 @@ Compare the managed configs without modifying either copy:
 ```sh
 python3 scripts/compare_configs.py
 python3 scripts/compare_configs.py --diff
+python3 scripts/compare_configs.py --diff --color=always | less -R
+python3 scripts/compare_configs.py --diff --color=never > config.diff
 ```
 
 The default reports file status only. `--diff` shows repository-to-target text
 changes and can reveal sensitive values in live configs. Differences can reflect
 intentional portability edits; neither side is automatically newer or better.
 Use `--target /path/to/home` to compare another home directory.
+
+Both review commands support `--color {auto,always,never}` (default: `auto`).
+Automatic colors require a terminal; piped or redirected output stays plain.
+`always` preserves colors through pipes; `never` disables them. Presence of
+`NO_COLOR`, even empty, disables colors in every mode, including `always`.
 
 
 Edit the version in `home/` and restore it, or copy individual changed settings

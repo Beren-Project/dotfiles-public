@@ -25,6 +25,7 @@ scripts/install_zsh_plugins.py
 scripts/preview_zsh.py
 scripts/profile_zsh.py
 scripts/restore.py
+scripts/terminal_colors.py
 scripts/update_public_repo.py
 scripts/zsh-plugins.json
 tests/test_install_zsh_plugins.py

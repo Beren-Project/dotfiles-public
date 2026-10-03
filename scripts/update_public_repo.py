@@ -14,6 +14,7 @@ import tempfile
 # Preview must not leave import caches in either repository.
 sys.dont_write_bytecode = True
 from export_public import export
+from terminal_colors import TerminalColors, color_enabled
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -87,14 +88,15 @@ def dirty_status(target):
     return git(target, 'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching')
 
 
-def show_plan(before, after, old_dirs, new_dirs, show_diff, out):
+def show_plan(before, after, old_dirs, new_dirs, show_diff, out, colors=None):
+    colors = TerminalColors() if colors is None else colors
     additions = sorted(after.keys() - before.keys())
     changes = sorted(name for name in before.keys() & after.keys() if before[name] != after[name])
     deletions = sorted(before.keys() - after.keys())
     removed_dirs = sorted(old_dirs - new_dirs, key=lambda name: (-len(Path(name).parts), name))
     for label, names in [('ADD', additions), ('CHANGE', changes), ('DELETE', deletions)]:
         for name in names:
-            print(f'{label:7} {name!r}', file=out)
+            print(f'{colors.status(label)}{" " * (7 - len(label))} {name!r}', file=out)
             old, old_mode = before.get(name, (b'', None))
             new, new_mode = after.get(name, (b'', None))
             if old_mode is not None and new_mode is not None and old_mode != new_mode:
@@ -109,21 +111,22 @@ def show_plan(before, after, old_dirs, new_dirs, show_diff, out):
             except UnicodeError:
                 print('  Binary or non-UTF-8 contents differ; diff omitted.', file=out)
                 continue
-            for line in difflib.unified_diff(old_lines, new_lines,
-                    fromfile=f'public/{name!r}', tofile=f'snapshot/{name!r}'):
-                out.write(line)
+            for index, line in enumerate(difflib.unified_diff(old_lines, new_lines,
+                    fromfile=f'public/{name!r}', tofile=f'snapshot/{name!r}')):
+                out.write(colors.diff_line(line, index))
                 if not line.endswith('\n'):
                     out.write('\n\\ No newline at end of file\n')
     for name in removed_dirs:
-        print(f'RMDIR   {name!r}', file=out)
+        print(f'{colors.status("RMDIR")}   {name!r}', file=out)
     unchanged = len(before.keys() & after.keys()) - len(changes)
     print(f'Summary: add={len(additions)}, change={len(changes)}, delete={len(deletions)}, '
           f'unchanged={unchanged}, remove_dirs={len(removed_dirs)}', file=out)
     return additions, changes, deletions, removed_dirs
 
 
-def update(root, target, apply=False, show_diff=False, out=None):
+def update(root, target, apply=False, show_diff=False, out=None, color='auto'):
     out = sys.stdout if out is None else out
+    colors = TerminalColors(color_enabled(color, out))
     root, target = safe_path(root), safe_path(target)
     safe_path(root/'public-files.txt')
     validate_destination(root, target)
@@ -138,7 +141,7 @@ def update(root, target, apply=False, show_diff=False, out=None):
             raise ValueError('Refusing an empty public snapshot.')
         print(f'{"Apply" if apply else "Preview"}: {root} -> {target}', file=out)
         additions, changes, deletions, removed_dirs = show_plan(
-            before, after, old_dirs, new_dirs, show_diff, out)
+            before, after, old_dirs, new_dirs, show_diff, out, colors)
         if status:
             print('Destination has existing changes (including untracked/ignored files):', file=out)
             print(status.decode(errors='replace').rstrip(), file=out)
@@ -178,9 +181,12 @@ def main():
                         help='Existing public Git repository (default: ~/project/dotfiles-public)')
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--diff', action='store_true', help='Show public-to-snapshot text differences')
+    parser.add_argument('--color', choices=['auto', 'always', 'never'], default='auto',
+                        help='ANSI colors: auto for terminal output (default), always, or never; '
+                             'NO_COLOR disables colors in every mode, even when empty')
     args = parser.parse_args()
     try:
-        update(ROOT, args.target, args.apply, args.diff)
+        update(ROOT, args.target, args.apply, args.diff, color=args.color)
     except (OSError, ValueError) as exc:
         parser.exit(2, f'Public sync failed: {exc}\n')
 
