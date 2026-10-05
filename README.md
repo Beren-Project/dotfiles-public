@@ -45,6 +45,9 @@ The Zsh configuration is framework-free, with native completion, three optional
 standalone plugins, and the existing Starship prompt. See [setup and preview](docs/SETUP.md)
 for plugin installation and trying the shell before activation.
 
+See [PATH and tool ownership](docs/SETUP.md#other-integrations) for Cargo-managed
+tools, fnm initialization, and standalone Codex coexistence.
+
 ## Restore on a replacement machine
 
 1. Install Git and Python 3, then clone your published repository.

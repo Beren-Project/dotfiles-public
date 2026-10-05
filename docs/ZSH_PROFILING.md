@@ -1,5 +1,11 @@
 # Zsh startup profiling — 2026-09-17
 
+This report describes the configuration and inherited PATH measured on
+2026-09-17. The [2026-10-05 PATH cleanup](VALIDATION.md#cargo-ownership-and-wsl-path-cleanup--2026-10-05)
+changed startup configuration; these performance measurements have not been
+rerun against that state. See [setup notes](SETUP.md#other-integrations) for
+current PATH and tool ownership.
+
 ## Decision
 
 Keep the current startup configuration, Windows PATH access, and completion
