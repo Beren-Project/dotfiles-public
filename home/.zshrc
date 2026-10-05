@@ -1,13 +1,9 @@
 # Interactive Zsh configuration. Dependencies are installed separately.
 [[ -o interactive ]] || return 0
 
-# Environment: .zshenv loads Cargo; keep PATH entries unique.
+# Environment: .zshenv owns the base PATH; Neovim is an interactive preference.
 typeset -U path fpath
-[[ -r "$HOME/.local/bin/env" ]] && source "$HOME/.local/bin/env"
-for config_dir in /opt/nvim-linux-x86_64/bin "$HOME/.juliaup/bin" "$HOME/bin" "$HOME/.local/bin"; do
-  [[ -d "$config_dir" ]] && path=("$config_dir" $path)
-done
-unset config_dir
+[[ -d /opt/nvim-linux-x86_64/bin ]] && path=(/opt/nvim-linux-x86_64/bin "${path[@]}")
 export PATH
 
 # History shared across terminals; a leading space excludes a command.
@@ -15,6 +11,7 @@ HISTFILE="$HOME/.zsh_history"
 HISTSIZE=10000
 SAVEHIST=10000
 setopt APPEND_HISTORY SHARE_HISTORY HIST_IGNORE_DUPS HIST_IGNORE_SPACE HIST_REDUCE_BLANKS
+setopt INTERACTIVE_COMMENTS
 unsetopt INC_APPEND_HISTORY INC_APPEND_HISTORY_TIME
 
 # Completion: compinit -i ignores insecure directories rather than trusting them.
@@ -91,7 +88,17 @@ if [[ -n ${WSL_DISTRO_NAME:-} ]]; then
 fi
 
 [[ -r "$HOME/.julia/juliaup/completions/zsh.zsh" ]] && source "$HOME/.julia/juliaup/completions/zsh.zsh"
-command -v fnm >/dev/null 2>&1 && eval "$(fnm env --use-on-cd --shell zsh)"
+if command -v fnm >/dev/null 2>&1 && _dotfiles_fnm_env=$(fnm env --use-on-cd --shell zsh); then
+  # Generate first: failure must leave the existing fnm PATH untouched.
+  for _dotfiles_fnm_bin in "${path[@]}"; do
+    if [[ $_dotfiles_fnm_bin == /* && ${_dotfiles_fnm_bin:t} == bin &&
+          ${_dotfiles_fnm_bin:h:h:t} == fnm_multishells ]]; then
+      path=("${(@)path:#"$_dotfiles_fnm_bin"}")
+    fi
+  done
+  eval "$_dotfiles_fnm_env"
+fi
+unset _dotfiles_fnm_env _dotfiles_fnm_bin
 command -v direnv >/dev/null 2>&1 && eval "$(direnv hook zsh)"
 command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init zsh)"
 if [[ -o zle && -t 0 ]] && command -v fzf >/dev/null 2>&1; then

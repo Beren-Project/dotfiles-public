@@ -8,41 +8,43 @@
 # for ssh logins, install and configure the libpam-umask package.
 #umask 022
 
-# if running bash
-if [ -n "$BASH_VERSION" ]; then
-    # include .bashrc if it exists
-    if [ -f "$HOME/.bashrc" ]; then
-	. "$HOME/.bashrc"
+# Build the login environment before interactive Bash integrations run.
+# Preserve non-empty inherited ordering, including paths containing spaces.
+_dotfiles_path_rest=${PATH-}:
+_dotfiles_login_path=
+_dotfiles_path_started=
+while [ -n "$_dotfiles_path_rest" ]; do
+    _dotfiles_path_entry=${_dotfiles_path_rest%%:*}
+    _dotfiles_path_rest=${_dotfiles_path_rest#*:}
+    case $_dotfiles_path_entry in
+        ""|"$HOME/.cargo/bin"|"$HOME/bin"|"$HOME/.local/bin") continue ;;
+    esac
+    if [ -n "$_dotfiles_path_started" ]; then
+        case :$_dotfiles_login_path: in
+            *:"$_dotfiles_path_entry":*) continue ;;
+        esac
+        _dotfiles_login_path=$_dotfiles_login_path:$_dotfiles_path_entry
+    else
+        _dotfiles_login_path=$_dotfiles_path_entry
+        _dotfiles_path_started=yes
     fi
-fi
-
-# set PATH so it includes user's private bin if it exists
-if [ -d "$HOME/bin" ] ; then
-    PATH="$HOME/bin:$PATH"
-fi
-
-# set PATH so it includes user's private bin if it exists
-if [ -d "$HOME/.local/bin" ] ; then
-    PATH="$HOME/.local/bin:$PATH"
-fi
+done
+PATH=$_dotfiles_login_path
 [ -r "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
-
-# >>> juliaup initialize >>>
-
-# !! Contents within this block are managed by juliaup !!
-
-case ":$PATH:" in
-    *:$HOME/.juliaup/bin:*)
-        ;;
-
-    *)
-        export PATH=$HOME/.juliaup/bin${PATH:+:${PATH}}
-        ;;
+# Cargo's generated environment can leave a trailing colon when PATH was empty.
+PATH=${PATH%:}
+case :$PATH: in
+    *:"$HOME/.cargo/bin":*) ;;
+    *) [ -d "$HOME/.cargo/bin" ] && PATH="$HOME/.cargo/bin${PATH:+:$PATH}" ;;
 esac
+[ -d "$HOME/bin" ] && PATH="${PATH:+$PATH:}$HOME/bin"
+[ -d "$HOME/.local/bin" ] && PATH="${PATH:+$PATH:}$HOME/.local/bin"
+export PATH
+unset _dotfiles_path_rest _dotfiles_login_path _dotfiles_path_started _dotfiles_path_entry
 
-# <<< juliaup initialize <<<
-
-[ -r "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
+if [ -n "${BASH_VERSION:-}" ] && [ -r "$HOME/.bashrc" ]; then
+    . "$HOME/.bashrc"
+fi
 
 # Keep startup successful when optional tools are absent.
 true

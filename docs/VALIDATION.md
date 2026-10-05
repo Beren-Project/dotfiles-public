@@ -1,5 +1,64 @@
 # Validation
 
+## Cargo ownership and WSL PATH cleanup — 2026-10-05
+
+Zsh's base environment now belongs to `.zshenv`; interactive startup adds
+Neovim and the current fnm multishell. `.profile` constructs the portable login
+environment before Bash setup; `.bashrc` only fills missing Cargo/local-bin
+entries. Legacy uv helper sourcing and Juliaup installer PATH blocks were
+removed, while current Julia completions and optional integrations remain.
+The dependency report describes Cargo-managed tools and no longer checks the
+removed installer files. Codex installation remains outside this repository.
+
+The explicit Zsh priority regression checks Neovim, Cargo, inherited Linux and
+Windows entries in their original relative order, conditional `~/bin`, and
+local-bin last. It includes misplaced/duplicate inherited entries, Windows
+paths containing spaces, conflicting executable fixtures, repeated startup,
+and preserved Julia completions. Neovim is conditional on its directory being
+present; the complete order was exercised on this machine.
+
+fnm fixtures verify generation sees the old entries before cleanup, fresh and
+nested startup each retain one new multishell, unrelated lookalike/relative
+paths remain, and `--use-on-cd --shell zsh` is preserved. A failed generator
+emits misleading environment output deliberately; PATH afterward equals the
+generator's inherited PATH byte-for-byte, including after repeated sourcing.
+
+Other regressions cover noninteractive Zsh, pasted comments, optional-directory
+and Cargo-environment absence, repeated portable profile loading that removes
+leading, trailing, and consecutive empty PATH components while retaining
+non-empty inherited ordering, one Cargo load during Bash login setup, and Bash's guarded
+fallback without reordering already-present entries. The browser fixture now
+uses an explicit inherited tools directory so the system `wslpath` cannot
+override it under the new low-priority `~/bin` policy. Isolated interactive
+Bash probes recognize only its expected missing-controlling-TTY diagnostics.
+An all-empty inherited PATH with installed tool directories also normalizes
+without reintroducing empty components, with or without Cargo's generated
+environment file or directory, and when only local-bin remains available.
+
+Validation command:
+
+```sh
+DOTFILES_TEST_PLUGINS="${XDG_DATA_HOME:-$HOME/.local/share}/zsh/plugins" \
+  python3 -B -m unittest discover -s tests -v
+```
+
+The complete suite passed: **78 tests, no skips**. All 16 Python
+modules compiled without writing bytecode; `zsh -n` for both startup files,
+`bash -n`, `sh -n`, and `git diff --check` passed. ShellCheck at warning severity
+passed for `.profile`. `.bashrc` retains its existing SC1090 warning at the
+dynamic `.bash_aliases` source; excluding that known warning passes with no
+other warnings. Zsh is outside ShellCheck's supported shells.
+
+A separate temporary ZDOTDIR/runtime check with the installed tools verified
+Cargo resolution for cargo, uv, uvx, Juliaup and Julia, generic local-bin
+resolution for Codex, and fnm-managed Node availability. Fresh, repeated and
+nested startup passed with no stderr, unique PATH entries, Neovim above Cargo,
+and local-bin last. Codex was looked up without execution; automated fixtures
+do not require it to be installed. Terminal appearance and real browser UI
+behavior remain manual checks. Live startup files, Windows PATH, public
+repositories, and historical references were not modified; nothing was staged
+or committed.
+
 ## Selective restore and public maintenance — 2026-10-01
 
 Repeatable `restore.py --file` arguments select exact entries from

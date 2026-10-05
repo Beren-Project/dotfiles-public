@@ -294,6 +294,11 @@ class ReportTests(unittest.TestCase):
             self.assertIn('PATH MISMATCH:',out.getvalue()); self.assertIn(f'FOUND: {plugin}',out.getvalue())
             self.assertIn('optional generated integration file',out.getvalue())
             self.assertIn('MISSING: eza',out.getvalue())
+            for name in ['uv', 'uvx', 'juliaup', 'julia']:
+                self.assertIn(f'MISSING: {name} — optional Cargo-managed', out.getvalue())
+            self.assertNotIn('.local/bin/env', out.getvalue())
+            self.assertNotIn('.juliaup/bin', out.getvalue())
+            self.assertNotIn('codex', out.getvalue())
             eza=bindir/'eza'; eza.write_text('#!/bin/sh\nexit 99\n'); eza.chmod(0o755)
             available=io.StringIO()
             dependencies.report(base,base/'live',{'PATH':str(bindir),'XDG_DATA_HOME':str(data)},available)

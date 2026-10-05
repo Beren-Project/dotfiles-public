@@ -34,7 +34,9 @@ def report(root=ROOT, home=None, environ=None, out=sys.stdout):
         'starship':'optional prompt', 'tmux':'optional terminal multiplexer',
         'eza':'optional ls, la, and ll aliases',
         'zellij':'optional terminal multiplexer', 'cargo':'optional Rust tools',
-        'juliaup':'optional Julia manager', 'uv':'optional Python tools',
+        'juliaup':'optional Cargo-managed Julia manager',
+        'julia':'optional Cargo-managed Julia launcher',
+        'uv':'optional Cargo-managed Python tools', 'uvx':'optional Cargo-managed tool runner',
         'fnm':'optional Node manager', 'direnv':'optional directory environments',
         'zoxide':'optional directory navigation', 'fzf':'optional fuzzy search',
         'broot':'optional Bash launcher', 'mmdc':'optional Mermaid rendering',
@@ -57,13 +59,13 @@ def report(root=ROOT, home=None, environ=None, out=sys.stdout):
     data = Path(environ.get('XDG_DATA_HOME') or home/'.local/share')
     for name in plugins:
         path_check(data/'zsh/plugins'/name/f'{name}.zsh', 'optional plugin entrypoint; revision not verified')
-    for relative in ['.cargo/env','.local/bin/env','.julia/juliaup/completions/zsh.zsh',
+    for relative in ['.cargo/env','.julia/juliaup/completions/zsh.zsh',
                      '.julia/juliaup/completions/bash.sh','.config/broot/launcher/bash/br']:
         path_check(home/relative, 'optional generated integration file')
     for path in ['/usr/share/doc/fzf/examples/completion.zsh',
                  '/usr/share/doc/fzf/examples/key-bindings.zsh']:
         path_check(path, 'optional Ubuntu fzf integration')
-    for path in [home/'.zfunc', home/'.juliaup/bin', Path('/opt/nvim-linux-x86_64/bin')]:
+    for path in [home/'.zfunc', Path('/opt/nvim-linux-x86_64/bin')]:
         print(f'{"FOUND" if path.is_dir() else "MISSING"}: {path} — optional completion/tool directory', file=out)
     print('Manual verification: Nerd Font appearance, application compatibility, and authentication.', file=out)
 

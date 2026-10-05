@@ -115,26 +115,23 @@ if ! shopt -oq posix; then
     . /etc/bash_completion
   fi
 fi
-[ -r "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
-
-# >>> juliaup initialize >>>
-
-# !! Contents within this block are managed by juliaup !!
-
-case ":$PATH:" in
-    *:$HOME/.juliaup/bin:*)
-        ;;
-
+# Login shells inherit .profile's environment; only fill missing entries here.
+case :$PATH: in
+    *:"$HOME/.cargo/bin":*) ;;
     *)
-        export PATH=$HOME/.juliaup/bin${PATH:+:${PATH}}
+        if [ -r "$HOME/.cargo/env" ]; then
+            . "$HOME/.cargo/env"
+        elif [ -d "$HOME/.cargo/bin" ]; then
+            export PATH="$HOME/.cargo/bin${PATH:+:$PATH}"
+        fi
         ;;
 esac
+case :$PATH: in
+    *:"$HOME/.local/bin":*) ;;
+    *) [ -d "$HOME/.local/bin" ] && export PATH="${PATH:+$PATH:}$HOME/.local/bin" ;;
+esac
 # Tab completion for juliaup and julia channel selection
-[ -f "$HOME/.julia/juliaup/completions/bash.sh" ] && source "$HOME/.julia/juliaup/completions/bash.sh"
-
-# <<< juliaup initialize <<<
-
-[ -r "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
+[ -r "$HOME/.julia/juliaup/completions/bash.sh" ] && source "$HOME/.julia/juliaup/completions/bash.sh"
 
 [ -r "$HOME/.config/broot/launcher/bash/br" ] && source "$HOME/.config/broot/launcher/bash/br"
 

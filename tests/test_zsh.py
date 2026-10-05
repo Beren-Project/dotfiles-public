@@ -129,6 +129,222 @@ class ZshTests(unittest.TestCase):
         return subprocess.run(command, stdin=subprocess.DEVNULL,
                               start_new_session=True, timeout=10, **options)
 
+    def install_environment_fixtures(self):
+        for name in ['.cargo/bin', 'bin', '.local/bin', '.juliaup/bin',
+                     '.julia/juliaup/completions']:
+            (self.home/name).mkdir(parents=True, exist_ok=True)
+        (self.home/'.cargo/env').write_text(
+            'CARGO_LOADS=$((${CARGO_LOADS:-0}+1))\n'
+            'case ":$PATH:" in *:"$HOME/.cargo/bin":*) ;; '
+            '*) export PATH="$HOME/.cargo/bin:$PATH" ;; esac\n')
+        for name in ['env', 'env.fish']:
+            (self.home/'.local/bin'/name).write_text('echo OBSOLETE_HELPER_SOURCED\n')
+        for name in ['zsh.zsh', 'bash.sh']:
+            (self.home/'.julia/juliaup/completions'/name).write_text(
+                'JULIA_COMPLETION=loaded\n')
+
+    def run_interactive_bash(self, code, env=None):
+        result = self.run_zsh(['/bin/bash', '--noprofile', '--norc', '-i', '-c', code],
+                              env=self.env if env is None else env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # These captured probes deliberately have no controlling TTY. Check
+        # Bash's expected diagnostics without masking errors from our configs.
+        stderr = re.sub(r'bash: cannot set terminal process group \(-?\d+\): '
+                        r'Inappropriate ioctl for device\n', '', result.stderr)
+        stderr = stderr.replace('bash: no job control in this shell\n', '')
+        self.assertEqual(stderr, '')
+        return result
+
+    def test_complete_path_priority_and_command_ownership(self):
+        self.install_environment_fixtures()
+        cargo = str(self.home/'.cargo/bin')
+        personal = str(self.home/'bin')
+        local = str(self.home/'.local/bin')
+        nvim = '/opt/nvim-linux-x86_64/bin'
+        inherited = ['/usr/bin', '/bin', str(self.home/'inherited Linux tools'),
+                     '/mnt/c/Program Files/Useful Tools', '/mnt/c/Windows/System32']
+        # Start with misplaced managed entries and duplicate inherited entries.
+        entries = [local, inherited[0], personal, cargo, *inherited[1:],
+                   cargo, local, inherited[1]]
+        if Path(nvim).is_dir():
+            entries.append(nvim)
+        for directory in [cargo, local]:
+            for name in ['cargo', 'uv', 'uvx', 'juliaup', 'julia', 'codex']:
+                tool = Path(directory)/name
+                tool.write_text('#!/bin/sh\nexit 0\n')
+                tool.chmod(0o755)
+        # Codex belongs only to generic local-bin availability in this fixture.
+        (Path(cargo)/'codex').unlink()
+        result = self.run_zsh(['zsh', '-i', '-c',
+            'print -r -- "$PATH"; source ~/.zshenv; source ~/.zshrc; '
+            'print -r -- "$PATH"; '
+            'for tool in cargo uv uvx juliaup julia codex; do whence -p "$tool"; done; '
+            'print -r -- "$JULIA_COMPLETION"'],
+            env={**self.env, 'PATH': ':'.join(entries)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        expected = ([nvim] if Path(nvim).is_dir() else []) + [cargo, *inherited, personal, local]
+        self.assertEqual(result.stdout.splitlines(), [':'.join(expected)] * 2 +
+                         [str(Path(cargo)/name) for name in ['cargo', 'uv', 'uvx', 'juliaup', 'julia']] +
+                         [str(Path(local)/'codex'), 'loaded'])
+
+    def test_noninteractive_zsh_owns_base_environment(self):
+        self.install_environment_fixtures()
+        result = self.run_zsh(['zsh', '-c', 'print -r -- "$PATH"; print -- $CARGO_LOADS'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        self.assertEqual(result.stdout.splitlines(), [
+            f'{self.home}/.cargo/bin:/usr/bin:/bin:{self.home}/bin:{self.home}/.local/bin', '1'])
+        self.assertFalse((self.home/'.zcompdump').exists())
+
+    def test_interactive_comments_in_copied_commands(self):
+        result = self.run_zsh(['zsh', '-i', '-c',
+            '# Copied comment\nprint -- COMMENT_BLOCK_OK # trailing comment\n'
+            'print -- $options[interactivecomments]'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        self.assertEqual(result.stdout, 'COMMENT_BLOCK_OK\non\n')
+
+    def install_fnm_fixture(self, fail=False):
+        self.install_environment_fixtures()
+        log = self.home/'fnm.jsonl'
+        fnm = self.home/'.cargo/bin/fnm'
+        fnm.write_text('#!/usr/bin/python3\nimport json, os, pathlib, shlex, sys\n'
+            f'log = pathlib.Path({str(log)!r})\n'
+            'with log.open("a") as stream:\n'
+            '    stream.write(json.dumps({"args": sys.argv[1:], "path": os.environ["PATH"]}) + "\\n")\n'
+            + ('print(\'export PATH="/failed-output-must-not-be-applied"\')\nsys.exit(7)\n' if fail else
+               'multishell = str(log.parent/"runtime/fnm_multishells"/str(os.getpid()))\n'
+               'print("export FNM_MULTISHELL_PATH=" + shlex.quote(multishell))\n'
+               'print("export PATH=" + shlex.quote(multishell + "/bin") + ":$PATH")\n'))
+        fnm.chmod(0o755)
+        return log
+
+    def test_fnm_repeated_and_nested_startup_removes_only_multishell_paths(self):
+        log = self.install_fnm_fixture()
+        stale = ['/run/user/1000/fnm_multishells/old/bin',
+                 str(self.home/'runtime/fnm_multishells/older/bin')]
+        unrelated = ['/opt/fnm_multishells-tools/personal/bin',
+                     '/opt/fnm_multishells/personal/nested/bin',
+                     'fnm_multishells/personal/bin', '/mnt/c/Windows/System32']
+        env = {**self.env, 'PATH': ':'.join([*stale, '/usr/bin', '/bin', *unrelated])}
+        result = self.run_zsh(['zsh', '-i', '-c',
+            'print -r -- "$PATH"; source ~/.zshrc; print -r -- "$PATH"; '
+            'zsh -i -c \'print -r -- "$PATH"\''], env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        calls = [json.loads(line) for line in log.read_text().splitlines()]
+        paths = [line.split(':') for line in result.stdout.splitlines()]
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(paths), 3)
+        expected_tail = (['/opt/nvim-linux-x86_64/bin']
+                         if Path('/opt/nvim-linux-x86_64/bin').is_dir() else [])
+        expected_tail += [str(self.home/'.cargo/bin'), '/usr/bin', '/bin',
+                          *unrelated, str(self.home/'bin'), str(self.home/'.local/bin')]
+        for call, entries in zip(calls, paths):
+            self.assertEqual(call['args'], ['env', '--use-on-cd', '--shell', 'zsh'])
+            self.assertTrue(entries[0].startswith(str(self.home/'runtime/fnm_multishells') + '/'))
+            self.assertTrue(entries[0].endswith('/bin'))
+            self.assertEqual(entries[1:], expected_tail)
+        self.assertEqual(len({entries[0] for entries in paths}), 3)
+        # Generation sees the prior entries before cleanup starts.
+        self.assertTrue(set(stale).issubset(calls[0]['path'].split(':')))
+        self.assertIn(paths[0][0], calls[1]['path'].split(':'))
+        self.assertIn(paths[1][0], calls[2]['path'].split(':'))
+
+    def test_fnm_generation_failure_preserves_exact_path(self):
+        log = self.install_fnm_fixture(fail=True)
+        env = {**self.env, 'PATH': ':'.join([
+            '/run/user/1000/fnm_multishells/old/bin', '/usr/bin', '/bin',
+            '/mnt/c/Program Files/Useful Tools', '/run/user/1000/fnm_multishells/older/bin'])}
+        result = self.run_zsh(['zsh', '-i', '-c',
+            'print -r -- "$PATH"; source ~/.zshrc; print -r -- "$PATH"'], env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        calls = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual(len(calls), 2)
+        # Compare the exact PATH at generation time, not just its membership.
+        self.assertEqual(result.stdout.splitlines(), [call['path'] for call in calls])
+        self.assertEqual(calls[0]['path'], calls[1]['path'])
+
+    def test_portable_profile_priority_and_repeated_sourcing(self):
+        self.install_environment_fixtures()
+        inherited = ['/usr/bin', '/bin', '/mnt/c/Program Files/Useful Tools',
+                     '/mnt/c/Windows/System32']
+        cargo, personal, local = [str(self.home/name) for name in ['.cargo/bin', 'bin', '.local/bin']]
+        # Leading, trailing, and consecutive empty entries must all disappear.
+        env = {**self.env, 'PATH': ':'.join([
+            '', local, *inherited[:3], '', '', inherited[3], personal, cargo, '/usr/bin', local, ''])}
+        result = self.run_zsh(['/bin/sh', '-c',
+            '. "$HOME/.profile"; printf "%s\\n" "$PATH"; '
+            '. "$HOME/.profile"; printf "%s\\n" "$PATH"'], env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        self.assertEqual(result.stdout.splitlines(), [':'.join([cargo, *inherited, personal, local])] * 2)
+        for normalized in result.stdout.splitlines():
+            self.assertNotIn('', normalized.split(':'))
+
+    def test_portable_profile_does_not_reintroduce_empty_components(self):
+        self.install_environment_fixtures()
+        for available in ['cargo environment', 'cargo directory', 'personal directories', 'local directory']:
+            with self.subTest(available=available):
+                if available == 'cargo directory':
+                    (self.home/'.cargo/env').unlink()
+                elif available == 'personal directories':
+                    (self.home/'.cargo/bin').rmdir()
+                elif available == 'local directory':
+                    (self.home/'bin').rmdir()
+                result = self.run_zsh(['/bin/sh', '-c',
+                    '. "$HOME/.profile"; printf "%s\\n" "$PATH"; '
+                    '. "$HOME/.profile"; printf "%s\\n" "$PATH"'],
+                    env={**self.env, 'PATH': '::'})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr, '')
+                expected = ':'.join(str(self.home/name) for name in ['.cargo/bin', 'bin', '.local/bin']
+                                    if (self.home/name).is_dir())
+                self.assertEqual(result.stdout.splitlines(), [expected] * 2)
+                for normalized in result.stdout.splitlines():
+                    self.assertNotIn('', normalized.split(':'))
+
+    def test_bash_login_environment_loads_cargo_once_before_interactive_setup(self):
+        self.install_environment_fixtures()
+        result = self.run_interactive_bash(
+            '. "$HOME/.profile"; printf "%s\\n" "$PATH" "$CARGO_LOADS" "$JULIA_COMPLETION"')
+        self.assertEqual(result.stdout.splitlines(), [
+            f'{self.home}/.cargo/bin:/usr/bin:/bin:{self.home}/bin:{self.home}/.local/bin', '1', 'loaded'])
+
+    def test_bash_fallback_fills_missing_entries_without_reordering_present_entries(self):
+        self.install_environment_fixtures()
+        code = '. "$HOME/.bashrc"; . "$HOME/.bashrc"; printf "%s\\n" "$PATH" "${CARGO_LOADS:-0}"'
+        cargo, local = [str(self.home/name) for name in ['.cargo/bin', '.local/bin']]
+        inherited = ['/usr/bin', '/bin', '/mnt/c/Windows/System32']
+        for entries, expected, loads in [
+            (inherited, [cargo, *inherited, local], '1'),
+            ([local, *inherited, cargo], [local, *inherited, cargo], '0'),
+        ]:
+            with self.subTest(entries=entries):
+                result = self.run_interactive_bash(code, env={**self.env, 'PATH': ':'.join(entries)})
+                self.assertEqual(result.stdout.splitlines(), [':'.join(expected), loads])
+
+    def test_startup_without_generated_cargo_environment(self):
+        for directories_present in [False, True]:
+            with self.subTest(directories_present=directories_present):
+                if directories_present:
+                    self.install_environment_fixtures()
+                    (self.home/'.cargo/env').unlink()
+                cargo = [str(self.home/'.cargo/bin')] if directories_present else []
+                local = [str(self.home/'.local/bin')] if directories_present else []
+                personal = [str(self.home/'bin')] if directories_present else []
+                expected = ':'.join([*cargo, '/usr/bin', '/bin', *personal, *local])
+                for command in [['zsh', '-c', 'print -r -- "$PATH"'],
+                                ['/bin/sh', '-c', '. "$HOME/.profile"; printf "%s\\n" "$PATH"']]:
+                    result = self.run_zsh(command)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stderr, '')
+                    self.assertEqual(result.stdout.strip(), expected)
+                result = self.run_interactive_bash('. "$HOME/.bashrc"; printf "%s\\n" "$PATH"')
+                self.assertEqual(result.stdout.strip(), ':'.join([*cargo, '/usr/bin', '/bin', *local]))
+
     def profile_startup(self):
         # Include /etc/zsh/zshrc: -d would hide Ubuntu's duplicate compinit.
         result = self.run_zsh(['zsh', '-i', '-c',
@@ -230,7 +446,9 @@ class ZshTests(unittest.TestCase):
         self.assertTrue(r.stdout.endswith('0\n'))
 
     def test_wsl_browser_helpers(self):
-        bindir = self.home/'bin'; bindir.mkdir()
+        # Conversion fixtures must be ahead of the real system wslpath;
+        # ~/bin now intentionally follows inherited system directories.
+        bindir = self.home/'browser-tools'; bindir.mkdir()
         log = self.home/'browser.jsonl'
         converter = bindir/'wslpath'
         converter.write_text('#!/usr/bin/python3\nimport sys\n'
@@ -242,7 +460,8 @@ class ZshTests(unittest.TestCase):
             executable.write_text('#!/usr/bin/python3\nimport sys,json\n'
                 + f'with open({str(log)!r}, "a") as f: f.write(json.dumps(sys.argv) + "\\n")\n')
             executable.chmod(0o755)
-        env = {**self.env, 'WSL_DISTRO_NAME': 'TestUbuntu'}
+        env = {**self.env, 'WSL_DISTRO_NAME': 'TestUbuntu',
+               'PATH': str(bindir) + ':' + self.env['PATH']}
         for browser in ['edge', 'chrome']:
             for filename in ['notes with spaces.md', '-notes.md', 'notes %TEMP% & !.txt']:
                 with self.subTest(browser=browser, filename=filename):

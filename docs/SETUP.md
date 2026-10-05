@@ -128,6 +128,8 @@ both keeps the default of restoring all managed configs.
 - Shared history: commands from other terminals become available at the next
   prompt. History keeps 10,000 entries; leading-space commands are excluded.
 - Emacs editing: Ctrl+A / Ctrl+E move to the start/end of the line.
+- Interactive comments are enabled, so pasted command blocks can include `#`
+  comment lines. Quote literal arguments containing `#` when necessary.
 - Tab completion uses a static copy of this machine's eza 0.23.5 colors for basic
   file kinds and common extensions: bold blue directories, plain ordinary files,
   green executables, cyan symlinks, and file-type colors. This is a snapshot,
@@ -189,11 +191,46 @@ defines the functions; the existing PATH and completion audit policy remain.
 
 ### Other integrations
 
-Cargo loads quietly from `.zshenv` when installed. Juliaup, uv, fnm, direnv,
-zoxide, and Ubuntu's fzf integration load only when their dependencies exist.
-Tool-generated environment files and `.zfunc` completions are not backed up;
-recreate them using their installers. Bash's existing optional broot integration
-is unchanged. Zsh includes `/opt/nvim-linux-x86_64/bin` only if it exists.
+`.zshenv` quietly loads the readable Cargo environment and owns Zsh's base PATH.
+Interactive Zsh adds the optional Neovim preference and initializes fnm, giving
+this order when the corresponding directories and tools are installed:
+
+```text
+current fnm multishell/bin
+/opt/nvim-linux-x86_64/bin
+~/.cargo/bin
+inherited Linux and Windows entries, in their original relative order
+~/bin
+~/.local/bin
+```
+
+PATH entries are unique; inherited managed entries are repositioned too.
+`~/bin` and `~/.local/bin` are included only when present. `.profile` builds the
+portable login environment with Cargo first, inherited entries next, then
+`~/bin` and `~/.local/bin`, before sourcing Bash's interactive configuration.
+Login normalization drops empty PATH components, which otherwise search the
+current working directory, while preserving non-empty inherited ordering.
+`.bashrc` provides guarded Cargo/local-bin fallbacks when those entries are
+missing; it does not reorder arbitrary standalone Bash environments.
+
+uv and uvx, Juliaup, and the Julia launcher are Cargo-managed and resolve from
+`~/.cargo/bin`. Julia runtimes/state and optional completions remain under
+`~/.julia/juliaup/`. Shell startup does not source the old `~/.local/bin/env` or
+`env.fish` helpers or inject `~/.juliaup/bin`. Older installer-based machines
+need to migrate their tools separately; these dotfiles do not install them.
+
+fnm retains `--use-on-cd`. Startup generates its environment successfully before
+removing prior absolute `fnm_multishells/<single directory>/bin` PATH entries and
+applying the new environment. If generation fails, PATH at entry to fnm
+initialization remains unchanged. Unrelated inherited directories are retained.
+
+The native standalone Codex installation can use the generic `~/.local/bin`
+entry for its symlink. No Codex-specific PATH block, installation, npm package,
+or dependency requirement belongs to this configuration.
+
+direnv, zoxide, Ubuntu's terminal-only fzf integration, Julia completions, and
+Bash's broot integration remain optional. Generated Cargo environment files and
+completion files are not backed up; regenerate them with the owning tools.
 
 Install eza to enable the `ls`, `la`, and `ll` aliases. The dependency report
 lists it as optional; missing eza leaves the system ls available.
