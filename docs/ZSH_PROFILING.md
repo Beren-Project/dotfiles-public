@@ -2,9 +2,11 @@
 
 This report describes the configuration and inherited PATH measured on
 2026-09-17. The [2026-10-05 PATH cleanup](VALIDATION.md#cargo-ownership-and-wsl-path-cleanup--2026-10-05)
-changed startup configuration; these performance measurements have not been
-rerun against that state. See [setup notes](SETUP.md#other-integrations) for
-current PATH and tool ownership.
+and [2026-10-06 fzf change](VALIDATION.md#portable-fzf-zsh-integration--2026-10-06)
+subsequently changed startup configuration. These performance measurements have
+not been rerun against the current state, and the non-TTY samples do not measure
+terminal-only fzf setup. See [setup notes](SETUP.md#other-integrations) for current
+PATH and tool ownership.
 
 ## Decision
 

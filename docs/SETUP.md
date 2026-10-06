@@ -3,9 +3,13 @@
 ## Operating system and environment
 
 This project is developed for **Ubuntu first**, with Ubuntu on WSL2 as the
-current test environment. Native Ubuntu is also an intended target, but has not
-been separately validated. Other Linux distributions may need adapted package
-names and paths. Native Windows and macOS are outside the current target.
+current automated test environment. A reported human Zsh smoke test in a fresh
+official Ubuntu 26.04 container exposed the fzf packaging issue; see the
+[validation record](VALIDATION.md#portable-fzf-zsh-integration--2026-10-06)
+for the original report and local post-fix checks. Native Ubuntu hosts remain
+an intended target without full setup/recovery qualification. Other Linux
+distributions may need adapted package names and paths. Native Windows and
+macOS are outside the current target.
 
 Environment inspected on 2026-09-15:
 
@@ -50,6 +54,8 @@ OS compatibility or install missing dependencies.
 Install Zsh, Python 3, Git, Starship, and a Nerd Font for the terminal. The shell
 configuration was checked with Zsh 5.9 and Starship 1.25.1 on Ubuntu/WSL2.
 Oh My Zsh and a plugin manager are not required.
+For automated checks, follow the [test prerequisites](../README.md#validation),
+including Python 3.11+.
 
 Install the three standalone plugins explicitly:
 
@@ -242,6 +248,24 @@ continues. There is no fallback for fzf older than 0.48.0 or dependency on files
 under `/usr/share/doc/fzf/`. The dependency report checks command presence,
 without executing fzf or certifying its interface support. See the
 [upstream integration instructions](https://github.com/junegunn/fzf/blob/v0.67.0/README.md#setting-up-shell-integration).
+
+To check integration, run these commands in the interactive Zsh terminal opened
+by `preview_zsh.py`, or in a new terminal after restoring the startup files:
+
+```zsh
+fzf --version
+bindkey '^R'
+bindkey '^T'
+bindkey '^[c'
+print -- ${+widgets[fzf-history-widget]} ${+widgets[fzf-file-widget]} ${+widgets[fzf-cd-widget]} ${+widgets[fzf-completion]}
+```
+
+With supported fzf and default integration settings, the bindings should name
+`fzf-history-widget`, `fzf-file-widget`, and `fzf-cd-widget`, respectively, and
+the last command should print `1 1 1 1`. An intentionally empty
+`FZF_CTRL_R_COMMAND`, `FZF_CTRL_T_COMMAND`, or `FZF_ALT_C_COMMAND` can disable
+its corresponding binding. A captured `zsh -lic` probe without terminal stdin
+deliberately skips fzf setup, so use an actual interactive terminal for this check.
 
 Install eza to enable the `ls`, `la`, and `ll` aliases. The dependency report
 lists it as optional; missing eza leaves the system ls available.

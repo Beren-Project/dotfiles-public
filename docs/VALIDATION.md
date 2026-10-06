@@ -1,5 +1,11 @@
 # Validation
 
+This file records dated validation checkpoints. Commands, test counts, machine
+observations, and statements about repository/publication state describe each
+checkpoint; they are not all current instructions. Use the
+[README validation guidance](../README.md#validation) and
+[setup notes](SETUP.md) for current prerequisites and operational steps.
+
 ## Portable fzf Zsh integration — 2026-10-06
 
 The Ubuntu 26.04 container smoke test exposed an optional-integration gap:
@@ -12,6 +18,13 @@ Generation runs once; failed output is discarded, stderr remains visible,
 and startup continues. The temporary output variable is removed afterward.
 The dependency report describes the interface requirement without executing
 fzf or checking obsolete documentation paths.
+
+The original issue came from a reported human smoke test in a fresh official
+Ubuntu 26.04 container with fzf 0.67.0 (debian). The report found the other Zsh
+integrations working and clean `zsh -lic 'true'` startup, while fzf widgets and
+bindings were missing. The post-fix checks below reproduce the packaging
+condition locally; they do not claim a post-fix rerun of that container or
+full native-host setup/recovery qualification.
 
 Five new Zsh regressions use private PTYs and dependency fixtures to verify
 history/file/directory/completion widgets and their actual key bindings,

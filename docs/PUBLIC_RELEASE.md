@@ -132,7 +132,9 @@ or cleans Git, and never transfers private history. After a successful apply,
 another preview reports no changes. Another apply requires you to first resolve
 the previous unstaged changes; once committed, an unchanged apply is a no-op.
 
-For validation from the public repository, suppress bytecode generation:
+For validation from the public repository, use the
+[test prerequisites](../README.md#validation), including Python 3.11+, and
+suppress bytecode generation:
 
 ```sh
 cd ~/project/dotfiles-public
@@ -147,7 +149,11 @@ dirty/ignored-file safety checks still apply.
 
 Ubuntu is the first target for future bootstrap development, consistent with the
 [project OS policy](../README.md#operating-system-target). Current validation is
-on Ubuntu/WSL2; exporting a snapshot does not establish cross-platform support.
+automated on Ubuntu/WSL2, with additional targeted evidence from a reported
+human Zsh smoke test in a fresh Ubuntu 26.04 container. The container report
+exposed the fzf packaging issue; the fix was verified locally with documentation
+files hidden. Full native-host setup/recovery remains unqualified, and exporting
+a snapshot does not establish cross-platform support.
 
 The future bootstrap takes a public repository URL and a reviewed full commit
 ID, fetches that exact commit into a dedicated checkout, and verifies the checkout

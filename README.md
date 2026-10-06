@@ -14,7 +14,8 @@ and shell behavior are developed and validated on Ubuntu first.
 | Environment | Project status |
 | --- | --- |
 | Ubuntu on WSL2, x86_64 | Current development and test environment |
-| Native Ubuntu | Intended target; not separately validated yet |
+| Fresh Ubuntu 26.04 container | Reported human Zsh smoke test exposed the fzf packaging issue |
+| Native Ubuntu host | Intended target; full host setup and recovery not separately qualified |
 | Other Linux distributions | Compatibility not validated; paths and dependencies may need adjustment |
 | Native Windows and macOS | Outside the current target |
 
@@ -22,6 +23,10 @@ The machine inspected on 2026-09-15 reports **Ubuntu 26.04.1 LTS on WSL2**.
 This records the tested environment, not a minimum Ubuntu version or a claim
 that every Ubuntu release is supported. Windows Terminal is the terminal host;
 the shell and restore tools run inside Ubuntu.
+
+The container smoke test reported working integrations alongside the fzf
+failure. The fix was verified locally with documentation files hidden; this
+does not establish a post-fix container rerun or full native-host qualification.
 
 See [environment details and checks](docs/SETUP.md#operating-system-and-environment)
 before setting up another machine, and [validation evidence](docs/VALIDATION.md)
@@ -118,7 +123,8 @@ changes and can reveal sensitive values in live configs. Differences can reflect
 intentional portability edits; neither side is automatically newer or better.
 Use `--target /path/to/home` to compare another home directory.
 
-Both review commands support `--color {auto,always,never}` (default: `auto`).
+`compare_configs.py` and `update_public_repo.py` support
+`--color {auto,always,never}` (default: `auto`).
 Automatic colors require a terminal; piped or redirected output stays plain.
 `always` preserves colors through pipes; `never` disables them. Presence of
 `NO_COLOR`, even empty, disables colors in every mode, including `always`.
@@ -159,6 +165,11 @@ See [recurring synchronization](docs/PUBLIC_RELEASE.md#recurring-synchronization
 for safety checks, diff output, and alternate destinations.
 
 ## Validation
+
+Run the suite inside Ubuntu with Git, Zsh, and **Python 3.11+** installed.
+The suite uses `tomllib` and subprocess process-group APIs introduced in 3.11;
+the recorded test environment used Python 3.14.4. This API requirement does not
+establish qualification of every Python version in between.
 
 ```sh
 python3 -B -m unittest discover -s tests -v
