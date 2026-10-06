@@ -101,10 +101,12 @@ fi
 unset _dotfiles_fnm_env _dotfiles_fnm_bin
 command -v direnv >/dev/null 2>&1 && eval "$(direnv hook zsh)"
 command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init zsh)"
-if [[ -o zle && -t 0 ]] && command -v fzf >/dev/null 2>&1; then
-  [[ -r /usr/share/doc/fzf/examples/completion.zsh ]] && source /usr/share/doc/fzf/examples/completion.zsh
-  [[ -r /usr/share/doc/fzf/examples/key-bindings.zsh ]] && source /usr/share/doc/fzf/examples/key-bindings.zsh
+# fzf 0.48.0+ embeds integration; apply only successfully generated output.
+if [[ -o zle && -t 0 ]] && command -v fzf >/dev/null 2>&1 &&
+    _dotfiles_fzf_env=$(fzf --zsh); then
+  eval "$_dotfiles_fzf_env"
 fi
+unset _dotfiles_fzf_env
 export MERMAID_FILTER_PUPPETEER_CONFIG="$HOME/.config/mermaid/pptr.json"
 command -v mmdc >/dev/null 2>&1 && alias mmdc='mmdc -p "$MERMAID_FILTER_PUPPETEER_CONFIG"'
 

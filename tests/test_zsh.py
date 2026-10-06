@@ -445,6 +445,151 @@ class ZshTests(unittest.TestCase):
             self.assertIn(expected,r.stdout)
         self.assertTrue(r.stdout.endswith('0\n'))
 
+    def install_fzf_fixture(self, script, status=0, diagnostic=''):
+        bindir = self.home/'fzf-tools'
+        bindir.mkdir()
+        log = self.home/'fzf-calls.jsonl'
+        tool = bindir/'fzf'
+        tool.write_text('#!/usr/bin/python3\nimport json, pathlib, sys\n'
+            f'with pathlib.Path({str(log)!r}).open("a") as stream:\n'
+            '    stream.write(json.dumps(sys.argv[1:]) + "\\n")\n'
+            f'sys.stdout.write({script!r})\n'
+            f'sys.stderr.write({diagnostic!r})\n'
+            f'sys.exit({status})\n')
+        tool.chmod(0o755)
+        self.env['PATH'] = str(bindir) + ':' + self.env['PATH']
+        return log
+
+    def run_pty_zsh(self, code, options=('-l', '-i')):
+        # A finite startup probe with real terminal stdin; stderr shares the
+        # private PTY so diagnostics cannot disappear into an unobserved stream.
+        command = ['/usr/bin/zsh', *options, '-c', code]
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.chdir(self.home)
+            os.execve(command[0], command, self.env)
+        output = bytearray()
+        status = None
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if select.select([fd], [], [], 0.1)[0]:
+                    try:
+                        chunk = os.read(fd, 65536)
+                    except OSError:
+                        chunk = b''
+                    output.extend(chunk)
+                waited, value = os.waitpid(pid, os.WNOHANG)
+                if waited:
+                    status = value
+                    # Drain bytes written immediately before the child exited.
+                    while select.select([fd], [], [], 0)[0]:
+                        try:
+                            chunk = os.read(fd, 65536)
+                        except OSError:
+                            break
+                        if not chunk:
+                            break
+                        output.extend(chunk)
+                    break
+            self.assertIsNotNone(status, output.decode(errors='replace'))
+            return subprocess.CompletedProcess(command, os.waitstatus_to_exitcode(status),
+                                               output.decode(errors='replace').replace('\r\n', '\n'))
+        finally:
+            if status is None:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            os.close(fd)
+
+    def fzf_probe(self):
+        return ("print -- WIDGETS:${+widgets[fzf-history-widget]}:"
+                "${+widgets[fzf-file-widget]}:${+widgets[fzf-cd-widget]}:"
+                "${+widgets[fzf-completion]}; "
+                "bindkey '^R'; bindkey '^T'; bindkey '^[c'; bindkey '^I'; "
+                "print -- TEMP:${+_dotfiles_fzf_env}; "
+                "print -- LATER:${+widgets[_dotfiles_insert_newline]}; true")
+
+    def assert_native_fzf_bindings(self, output):
+        self.assertIn('WIDGETS:0:0:0:0\n', output)
+        for binding in ['"^R" history-incremental-search-backward',
+                        '"^T" transpose-chars', '"^[c" capitalize-word',
+                        '"^I" expand-or-complete']:
+            self.assertIn(binding + '\n', output)
+        self.assertIn('TEMP:0\n', output)
+        self.assertIn('LATER:1\n', output)
+
+    def test_fzf_binary_output_installs_widgets_and_bindings(self):
+        # Identifiable functions prove these widgets came from --zsh output,
+        # even when this machine happens to have the distro example files.
+        script = ''
+        for widget, key in [('history', '^R'), ('file', '^T'), ('cd', '^[c')]:
+            name = f'fzf-{widget}-widget'
+            script += (f'{name}() {{ print -- FIXTURE_{widget}; }}\n'
+                       f'zle -N {name}\nbindkey "{key}" {name}\n')
+        script += ('fzf-completion() { print -- FIXTURE_completion; }\n'
+                   "zle -N fzf-completion\nbindkey '^I' fzf-completion\n")
+        log = self.install_fzf_fixture(script)
+        result = self.run_pty_zsh(self.fzf_probe() +
+            '; fzf-history-widget; fzf-file-widget; fzf-cd-widget; fzf-completion')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, 'WIDGETS:1:1:1:1\n'
+            '"^R" fzf-history-widget\n"^T" fzf-file-widget\n'
+            '"^[c" fzf-cd-widget\n"^I" fzf-completion\nTEMP:0\nLATER:1\n'
+            'FIXTURE_history\nFIXTURE_file\nFIXTURE_cd\nFIXTURE_completion\n')
+        self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], [['--zsh']])
+
+    def test_fzf_generation_failure_discards_output_and_preserves_diagnostic(self):
+        log = self.install_fzf_fixture(
+            'typeset -g FZF_PARTIAL_APPLIED=1\nbindkey "^R" undefined-partial-widget\n',
+            status=7, diagnostic='FZF_GENERATOR_FAILURE\n')
+        result = self.run_pty_zsh(self.fzf_probe() + '; print -- PARTIAL:${+FZF_PARTIAL_APPLIED}')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assert_native_fzf_bindings(result.stdout)
+        self.assertIn('FZF_GENERATOR_FAILURE\n', result.stdout)
+        self.assertIn('PARTIAL:0\n', result.stdout)
+        self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], [['--zsh']])
+
+    def test_fzf_evaluation_failure_is_visible_and_startup_continues(self):
+        self.install_fzf_fixture('command _dotfiles_fzf_missing_runtime_command\n')
+        result = self.run_pty_zsh(self.fzf_probe())
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assert_native_fzf_bindings(result.stdout)
+        self.assertIn('command not found: _dotfiles_fzf_missing_runtime_command\n', result.stdout)
+
+    def test_fzf_absent_leaves_native_widgets_and_clean_startup(self):
+        bindir = self.home/'without-fzf'
+        bindir.mkdir()
+        for name in ['mkdir', 'mv', 'rm', 'cat', 'date', 'hostname', 'uname']:
+            location = shutil.which(name, path='/usr/bin:/bin')
+            if location:
+                (bindir/name).symlink_to(location)
+        self.env['PATH'] = str(bindir)
+        result = self.run_pty_zsh('command -v fzf >/dev/null 2>&1; '
+                                 'print -- FZF_LOOKUP:$?; ' + self.fzf_probe())
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(result.stdout.startswith('FZF_LOOKUP:1\n'), result.stdout)
+        self.assert_native_fzf_bindings(result.stdout)
+        clean = self.run_pty_zsh('true')
+        self.assertEqual(clean.returncode, 0, clean.stdout)
+        self.assertEqual(clean.stdout, '')
+
+    def test_fzf_generator_obeys_interactive_zle_and_stdin_guards(self):
+        log = self.install_fzf_fixture('print -u2 -- UNEXPECTED_FZF_LOAD\n')
+        # Source explicitly to exercise the interactive-only early return.
+        noninteractive = self.run_pty_zsh('source "$ZDOTDIR/.zshrc"; true', options=('-l',))
+        self.assertEqual(noninteractive.returncode, 0, noninteractive.stdout)
+        self.assertEqual(noninteractive.stdout, '')
+        nonterminal = self.run_zsh(['/usr/bin/zsh', '-lic', 'true'])
+        self.assertEqual(nonterminal.returncode, 0, nonterminal.stderr)
+        self.assertEqual(nonterminal.stdout, '')
+        self.assertEqual(nonterminal.stderr, '')
+        no_zle = self.run_pty_zsh('print -- ZLE:$options[zle]; ' + self.fzf_probe(),
+                                  options=('-l', '-i', '+o', 'zle'))
+        self.assertEqual(no_zle.returncode, 0, no_zle.stdout)
+        self.assertTrue(no_zle.stdout.startswith('ZLE:off\n'), no_zle.stdout)
+        self.assert_native_fzf_bindings(no_zle.stdout)
+        self.assertFalse(log.exists())
+
     def test_wsl_browser_helpers(self):
         # Conversion fixtures must be ahead of the real system wslpath;
         # ~/bin now intentionally follows inherited system directories.

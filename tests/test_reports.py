@@ -294,15 +294,24 @@ class ReportTests(unittest.TestCase):
             self.assertIn('PATH MISMATCH:',out.getvalue()); self.assertIn(f'FOUND: {plugin}',out.getvalue())
             self.assertIn('optional generated integration file',out.getvalue())
             self.assertIn('MISSING: eza',out.getvalue())
+            self.assertIn('MISSING: fzf — optional fuzzy search; Zsh integration requires fzf 0.48.0+ / --zsh support (not executed)', out.getvalue())
+            self.assertNotIn('/usr/share/doc/fzf', out.getvalue())
             for name in ['uv', 'uvx', 'juliaup', 'julia']:
                 self.assertIn(f'MISSING: {name} — optional Cargo-managed', out.getvalue())
             self.assertNotIn('.local/bin/env', out.getvalue())
             self.assertNotIn('.juliaup/bin', out.getvalue())
             self.assertNotIn('codex', out.getvalue())
             eza=bindir/'eza'; eza.write_text('#!/bin/sh\nexit 99\n'); eza.chmod(0o755)
+            fzf=bindir/'fzf'
+            fzf.write_text('#!/usr/bin/python3\nfrom pathlib import Path\n'
+                           f'Path({str(base/"fzf-executed")!r}).touch()\nraise SystemExit(99)\n')
+            fzf.chmod(0o755)
             available=io.StringIO()
             dependencies.report(base,base/'live',{'PATH':str(bindir),'XDG_DATA_HOME':str(data)},available)
             self.assertIn('FOUND: eza',available.getvalue())
+            self.assertIn('FOUND: fzf',available.getvalue())
+            self.assertNotIn('/usr/share/doc/fzf', available.getvalue())
+            self.assertFalse((base/'fzf-executed').exists())
             with patch.object(dependencies,'report',side_effect=OSError('fixture')):
                 with patch.object(sys,'argv',['check_dependencies.py']), contextlib.redirect_stderr(io.StringIO()):
                     self.assertEqual(dependencies.main(),2)

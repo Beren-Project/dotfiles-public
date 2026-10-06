@@ -1,5 +1,65 @@
 # Validation
 
+## Portable fzf Zsh integration — 2026-10-06
+
+The Ubuntu 26.04 container smoke test exposed an optional-integration gap:
+dpkg exclusions can remove `/usr/share/doc/fzf/examples/` even though package
+metadata still lists the files. The prior readable-file checks silently left
+native Ctrl+R, Ctrl+T, and Alt+C bindings in place. Zsh now uses the embedded
+`fzf --zsh` interface, requiring fzf 0.48.0+ without a legacy-file fallback.
+Interactive-only, ZLE, terminal-stdin, and command-presence guards remain.
+Generation runs once; failed output is discarded, stderr remains visible,
+and startup continues. The temporary output variable is removed afterward.
+The dependency report describes the interface requirement without executing
+fzf or checking obsolete documentation paths.
+
+Five new Zsh regressions use private PTYs and dependency fixtures to verify
+history/file/directory/completion widgets and their actual key bindings,
+successful generator provenance and argument count, failed generation with
+misleading partial output and visible stderr, an evaluation-time command error,
+missing fzf with clean startup and native bindings, and all three startup
+guards. They also verify temporary-variable cleanup and a later widget's
+registration. The dependency-report regression checks both command absence
+and presence, removal of documentation checks, and nonexecution of fzf.
+The success/provenance and generator-failure regressions both fail against
+the original `.zshrc` in a disposable copy.
+
+Validation commands:
+
+```sh
+python3 -B -m unittest discover -s tests -p test_zsh.py -k fzf -v
+python3 -B -m unittest discover -s tests -p test_reports.py -k dependency -v
+DOTFILES_TEST_PLUGINS="${XDG_DATA_HOME:-$HOME/.local/share}/zsh/plugins" \
+  python3 -B -m unittest discover -s tests -v
+zsh -n home/.zshrc
+zsh -n home/.zshenv
+bash -n home/.bashrc
+sh -n home/.profile
+shellcheck -s sh -S warning home/.profile
+shellcheck -s bash -S warning -e SC1090 home/.bashrc
+git diff --check
+```
+
+The complete suite passed: **83 tests, no skips, 34.090 seconds**. All 16 Python
+modules compiled without bytecode; syntax, ShellCheck, and whitespace checks
+passed. ShellCheck excludes the existing dynamic `.bash_aliases` SC1090 warning.
+Export regression checks passed with the unchanged 36-file public allowlist.
+
+A separate real-binary probe used Zsh 5.9 and fzf 0.67.0 (debian) in private
+PTYs with a disposable HOME/ZDOTDIR. Bubblewrap hid `/usr/share/doc/fzf` using
+`--tmpfs` while leaving the host filesystem read-only. Both example files were
+confirmed absent; all four fzf widgets loaded, with Ctrl+R history, Ctrl+T file,
+Alt+C directory, and Tab completion bindings. The same checks passed with the
+installed standalone plugins and Starship, including their existing hooks and
+arrow/Shift+Enter bindings. PTY and captured `zsh -lic 'true'` exited 0 with no
+output. A restricted PATH with no fzf retained native history search, loaded
+plugins, and quiet startup. This reproduces the packaging condition locally;
+it is not a new fresh-container qualification run.
+
+Only canonical private-repository files changed. Existing export directories,
+the downstream public repository, live configuration, TERM/colors, and
+ubuntu-bootstrap were not modified; no changes were staged, committed, or pushed.
+
 ## Cargo ownership and WSL PATH cleanup — 2026-10-05
 
 Zsh's base environment now belongs to `.zshenv`; interactive startup adds

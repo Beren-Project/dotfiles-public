@@ -36,9 +36,9 @@ Platform assumptions to review when moving machines:
 
 - Ubuntu's global Zsh completion initialization is disabled by `.zshenv`, so
   `.zshrc` can initialize once after adding custom completion directories.
-- Optional fzf integration uses Ubuntu package paths under
-  `/usr/share/doc/fzf/examples/`. The optional Neovim PATH entry assumes an
-  x86_64 installation at `/opt/nvim-linux-x86_64/bin`.
+- Optional fzf Zsh integration requires fzf 0.48.0+ with `fzf --zsh` support;
+  packaged documentation/example files are not required. The optional Neovim
+  PATH entry assumes an x86_64 installation at `/opt/nvim-linux-x86_64/bin`.
 - WSL's inherited Windows PATH entries are preserved. Startup timings can
   therefore differ from native Ubuntu; see the recorded performance checks.
 
@@ -228,9 +228,20 @@ The native standalone Codex installation can use the generic `~/.local/bin`
 entry for its symlink. No Codex-specific PATH block, installation, npm package,
 or dependency requirement belongs to this configuration.
 
-direnv, zoxide, Ubuntu's terminal-only fzf integration, Julia completions, and
+direnv, zoxide, terminal-only fzf integration, Julia completions, and
 Bash's broot integration remain optional. Generated Cargo environment files and
 completion files are not backed up; regenerate them with the owning tools.
+
+fzf integration calls `fzf --zsh` once during interactive startup only when ZLE
+is available, stdin is a terminal, and fzf exists. Successful output installs
+upstream key bindings and fuzzy completion, including Ctrl+R history selection,
+Ctrl+T file selection, and Alt+C directory selection under default fzf settings.
+Missing fzf leaves the basic shell usable. Failed generation discards its output
+and leaves stderr visible; evaluation errors also remain visible while startup
+continues. There is no fallback for fzf older than 0.48.0 or dependency on files
+under `/usr/share/doc/fzf/`. The dependency report checks command presence,
+without executing fzf or certifying its interface support. See the
+[upstream integration instructions](https://github.com/junegunn/fzf/blob/v0.67.0/README.md#setting-up-shell-integration).
 
 Install eza to enable the `ls`, `la`, and `ll` aliases. The dependency report
 lists it as optional; missing eza leaves the system ls available.
